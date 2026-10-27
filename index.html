@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DSA Hub — Patterns & Animations</title>
+  <meta name="description" content="A personal DSA reference: 51 LC patterns + a browsable collection of interactive algorithm animations." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────── -->
+<header id="app-header">
+  <div class="header-brand">
+    <div>
+      <div class="brand-mono">// dsa_hub.personal</div>
+      <div class="brand-name">DSA <span>Hub</span></div>
+    </div>
+  </div>
+
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="patterns">
+      <span>Patterns</span>
+      <span class="tab-badge" id="pat-tab-count">51</span>
+    </button>
+    <button class="tab-btn" data-tab="animations">
+      <span>Animations</span>
+      <span class="tab-badge" id="anim-tab-count">0</span>
+    </button>
+  </nav>
+
+  <div class="header-right">
+    <button class="btn btn-accent btn-sm" id="btn-add-anim">
+      + Add Animation
+    </button>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════
+     PATTERNS VIEW
+═══════════════════════════════════════════════════════════════ -->
+<div id="view-patterns" class="view active">
+
+  <!-- Controls -->
+  <div id="pat-controls">
+    <div class="search-wrap">
+      <span class="si">⌕</span>
+      <input type="text" id="pat-search" placeholder="search pattern or problem..." oninput="patFilter()" autocomplete="off" />
+    </div>
+    <button class="fbtn on"  onclick="patFilterDiff('all',this)">All</button>
+    <button class="fbtn"     onclick="patFilterDiff('E',this)">Easy</button>
+    <button class="fbtn"     onclick="patFilterDiff('M',this)">Med</button>
+    <button class="fbtn"     onclick="patFilterDiff('H',this)">Hard</button>
+    <button class="fbtn"     onclick="patExpandAll()">Expand All</button>
+    <button class="fbtn"     onclick="patCollapseAll()">Collapse</button>
+    <span class="pat-info" id="pat-info"></span>
+  </div>
+
+  <section id="review-panel" aria-labelledby="review-heading">
+    <div class="review-head">
+      <div>
+        <div class="review-kicker">SPACED REPETITION</div>
+        <h2 id="review-heading">Review queue</h2>
+      </div>
+      <div id="progress-summary" class="progress-summary"></div>
+    </div>
+    <div id="review-list"></div>
+    <p id="review-empty" class="review-empty"></p>
+  </section>
+
+  <!-- Pattern grid -->
+  <div id="pat-grid"></div>
+
+  <div class="pat-empty" id="pat-empty">no results</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     ANIMATIONS VIEW
+═══════════════════════════════════════════════════════════════ -->
+<div id="view-animations" class="view">
+
+  <!-- ── Collection sub-view ──────────────────────────────────── -->
+  <div class="anim-view active" id="anim-view-collection">
+    <div id="anim-controls">
+      <span class="anim-count" id="anim-count">0 saved</span>
+    </div>
+    <div id="anim-grid"></div>
+    <div class="anim-empty" id="anim-empty">
+      <div>📭</div>
+      <p>No animations yet. Click <strong>+ Add Animation</strong> to get started.</p>
+    </div>
+  </div>
+
+  <!-- ── Player sub-view ──────────────────────────────────────── -->
+  <div class="anim-view" id="anim-view-player">
+    <div class="player-bar">
+      <button class="btn btn-ghost btn-sm" id="btn-back-player">← back</button>
+      <span class="player-title" id="player-title"></span>
+      <div class="player-related" id="player-related"></div>
+    </div>
+    <iframe
+      id="player-frame"
+      class="player-frame"
+      sandbox="allow-scripts allow-forms allow-modals allow-popups"
+      title="Animation player"
+    ></iframe>
+  </div>
+
+  <!-- ── Add sub-view ─────────────────────────────────────────── -->
+  <div class="anim-view" id="anim-view-add">
+    <div id="anim-view-add-inner">
+
+      <div class="form-title">Add an <span>Animation</span></div>
+      <div class="form-sub">// paste or upload your Claude-generated HTML file</div>
+
+      <form id="anim-add-form" novalidate>
+
+        <div class="form-group">
+          <label for="anim-title">Title <span class="req">*</span></label>
+          <input type="text" id="anim-title" placeholder="e.g. Binary Search Tree Insertion" autocomplete="off" required />
+        </div>
+
+        <div class="form-group">
+          <label for="anim-desc">Short description <small style="color:var(--muted);text-transform:none">(optional)</small></label>
+          <input type="text" id="anim-desc" placeholder="e.g. Animated walkthrough of BST node insertion" autocomplete="off" />
+        </div>
+
+        <div class="form-group">
+          <label for="anim-question">Related question <small style="color:var(--muted);text-transform:none">(optional)</small></label>
+          <select id="anim-question" class="question-select">
+            <option value="">Auto-match from title or LeetCode link</option>
+          </select>
+          <div id="anim-question-match" class="question-match-note" aria-live="polite"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Animation HTML <span class="req">*</span></label>
+
+          <div class="drop-zone" id="anim-dropzone" role="button" tabindex="0" aria-label="Click or drag HTML file">
+            <div class="dz-icon">⇧</div>
+            <p>Click or drag &amp; drop an <b>.html</b> file</p>
+          </div>
+          <input type="file" id="anim-file" class="file-hidden" accept=".html,text/html" />
+          <div id="badge-loaded" class="badge-loaded"></div>
+
+          <div class="divider">or paste HTML directly</div>
+
+          <textarea
+            id="anim-html"
+            class="code-box"
+            placeholder="<!DOCTYPE html>&#10;<html>...</html>"
+            spellcheck="false"
+          ></textarea>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost" id="anim-cancel">Cancel</button>
+          <button type="submit" class="btn btn-accent">Save to Collection</button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+</div><!-- /view-animations -->
+
+<dialog id="progress-dialog" class="progress-dialog">
+  <form id="progress-form">
+    <div class="review-kicker">PROBLEM PROGRESS</div>
+    <h2 id="progress-dialog-title">Log a solve</h2>
+    <p id="progress-problem-title" class="progress-problem-title"></p>
+
+    <label for="solve-minutes">Time taken (minutes)</label>
+    <input id="solve-minutes" type="number" min="1" max="1440" value="30" required>
+
+    <label for="solve-toughness">How tough did it feel?</label>
+    <select id="solve-toughness">
+      <option value="1">1 · Easy to recall</option>
+      <option value="2">2 · Manageable</option>
+      <option value="3" selected>3 · Needed some thought</option>
+      <option value="4">4 · Difficult</option>
+      <option value="5">5 · Very difficult</option>
+    </select>
+
+    <label class="hint-check"><input id="solve-used-hint" type="checkbox"> I used a hint or solution</label>
+    <p id="next-review-preview" class="field-help"></p>
+
+    <div class="progress-dialog-actions">
+      <button type="button" class="fbtn" id="progress-cancel">Cancel</button>
+      <button type="submit" class="fbtn on">Save progress</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Toast container -->
+<div id="toast-wrap"></div>
+
+<!-- Scripts (data first, then app) -->
+<script src="/patterns-data.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
+
+
+
