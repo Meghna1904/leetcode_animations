@@ -1,16 +1,9 @@
-import { neon } from '@neondatabase/serverless';
+import { getDatabase } from './_lib/database.js';
 import { hasForeignOrigin, sessionUserId, parseJsonBody } from './_lib/session.js';
 
 const MAX_STATE_BYTES = 4 * 1024 * 1024;
 const EMPTY_STATE = { questionProgress: {}, animations: [], deletedAnimationIds: [] };
-let database;
 let schemaReady;
-
-function getDatabase() {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not configured.');
-  if (!database) database = neon(process.env.DATABASE_URL);
-  return database;
-}
 
 async function ensureSchema(sql) {
   if (!schemaReady) {

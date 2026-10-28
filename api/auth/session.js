@@ -1,4 +1,4 @@
-import { neon } from '@neondatabase/serverless';
+import { getDatabase } from '../_lib/database.js';
 import { sessionUserId, syncConfigured } from '../_lib/session.js';
 
 export default async function handler(req, res) {
@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   const userId = sessionUserId(req);
   if (!userId || !syncConfigured()) return res.status(200).json({ configured: syncConfigured(), authenticated: false });
   try {
-    const sql = neon(process.env.DATABASE_URL);
+    const sql = getDatabase();
     const rows = await sql`SELECT username FROM dsa_hub_users WHERE id = ${userId} LIMIT 1`;
     if (!rows.length) return res.status(200).json({ configured: true, authenticated: false });
     res.status(200).json({ configured: true, authenticated: true, username: rows[0].username });

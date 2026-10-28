@@ -1,17 +1,11 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { neon } from '@neondatabase/serverless';
+import { getDatabase } from '../_lib/database.js';
 import { hasForeignOrigin, issueSession, parseJsonBody, sessionCookie, syncConfigured } from '../_lib/session.js';
 
 const scrypt = promisify(scryptCallback);
 const PASSWORD_BYTES = 64;
-let database;
 let schemaReady;
-
-function getDatabase() {
-  if (!database) database = neon(process.env.DATABASE_URL);
-  return database;
-}
 
 async function ensureSchema(sql) {
   if (!schemaReady) {
