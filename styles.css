@@ -30,6 +30,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
 
 html { scroll-behavior: smooth; }
 
@@ -59,6 +60,7 @@ body {
   height: 52px;
   gap: 0;
 }
+.header-right { gap: 6px; }
 
 .header-brand {
   display: flex;
@@ -427,7 +429,7 @@ body {
 .progress-dialog h2 { margin: 0; font-size: 18px; }
 .progress-problem-title { margin: 0 0 6px; color: var(--muted2); font-size: 11px; }
 .progress-dialog form > label:not(.hint-check) { margin-top: 4px; color: var(--muted2); font: 10px 'Space Mono', monospace; }
-.progress-dialog input[type="number"], .progress-dialog select {
+.progress-dialog input[type="number"], .progress-dialog input[type="password"], .progress-dialog select {
   width: 100%; padding: 9px 10px; border: 1px solid var(--border2); border-radius: var(--r);
   background: var(--bg); color: var(--text); font: 11px 'Space Mono', monospace;
 }

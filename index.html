@@ -30,6 +30,7 @@
   </nav>
 
   <div class="header-right">
+    <button class="btn btn-ghost btn-sm" id="btn-sync-status" type="button" aria-label="Cloud sync" title="Cloud sync">Sync</button>
     <button class="btn btn-accent btn-sm" id="btn-add-anim">
       + Add Animation
     </button>
@@ -188,6 +189,25 @@
     <div class="progress-dialog-actions">
       <button type="button" class="fbtn" id="progress-cancel">Cancel</button>
       <button type="submit" class="fbtn on">Save progress</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="sync-dialog" class="progress-dialog">
+  <form id="sync-form">
+    <div class="review-kicker">CLOUD SYNC</div>
+    <h2 id="sync-dialog-title">Sign in to sync</h2>
+    <p id="sync-dialog-message" class="progress-problem-title">Create a username and password, then use the same account on each device.</p>
+    <p id="sync-recovery-warning" class="progress-problem-title"><strong>Warning:</strong> There is no password recovery method. If you forget your password, you will lose access to that account’s cloud-synced data.</p>
+    <label id="sync-username-label" for="sync-username">Username</label>
+    <input id="sync-username" type="text" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_]{3,32}" required />
+    <label id="sync-password-label" for="sync-password">Password (at least 10 characters)</label>
+    <input id="sync-password" type="password" autocomplete="current-password" minlength="10" maxlength="256" required />
+    <div class="progress-dialog-actions">
+      <button class="fbtn" type="button" id="sync-cancel">Cancel</button>
+      <button class="fbtn" type="button" id="sync-sign-out" hidden>Sign out</button>
+      <button class="fbtn" type="submit" id="sync-sign-in" name="action" value="login">Sign in</button>
+      <button class="fbtn on" type="submit" id="sync-register" name="action" value="register">Create account</button>
     </div>
   </form>
 </dialog>

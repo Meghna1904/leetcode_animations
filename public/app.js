@@ -3,10 +3,18 @@
 // ══════════════════════════════════════════════════════════════
 let patActiveDiff = 'all';
 const QUESTION_PROGRESS_KEY = 'dsa_question_progress_v1';
+const DELETED_ANIMATIONS_KEY = 'dsa_animations_deleted_v1';
+const SYNC_ACCOUNT_KEY = 'dsa_sync_account_v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 let questionProgress = loadQuestionProgress();
 let pendingQuestionId = null;
 let pendingProgressMode = 'solve';
+let cloudSyncAuthenticated = false;
+let cloudSyncConfigured = false;
+let cloudSyncTimer = null;
+let cloudSyncRunning = false;
+let cloudSyncAgain = false;
+let localSyncVersion = 0;
 
 function loadQuestionProgress() {
   try {
@@ -20,6 +28,8 @@ function loadQuestionProgress() {
 function saveQuestionProgress() {
   try {
     localStorage.setItem(QUESTION_PROGRESS_KEY, JSON.stringify(questionProgress));
+    localSyncVersion++;
+    scheduleCloudSync();
     return true;
   } catch {
     toast('Could not save progress. Browser storage may be full.', true);
@@ -470,8 +480,19 @@ function loadAnimations() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; }
   catch { return []; }
 }
+function loadDeletedAnimationIds() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(DELETED_ANIMATIONS_KEY) || '[]');
+    return Array.isArray(ids) ? ids.filter(id => typeof id === 'string') : [];
+  } catch { return []; }
+}
+function saveDeletedAnimationIds(ids) {
+  localStorage.setItem(DELETED_ANIMATIONS_KEY, JSON.stringify([...ids]));
+}
 function saveAnimations(list) {
   localStorage.setItem(STORE_KEY, JSON.stringify(list));
+  localSyncVersion++;
+  scheduleCloudSync();
   const badge = document.getElementById('anim-tab-count');
   if (badge) badge.textContent = list.length;
 }
@@ -569,6 +590,9 @@ function openPlayer(id) {
 }
 
 function deleteAnim(id) {
+  const deletedIds = new Set(loadDeletedAnimationIds());
+  deletedIds.add(id);
+  saveDeletedAnimationIds(deletedIds);
   const updated = loadAnimations().filter(a => a.id !== id);
   saveAnimations(updated);
   animationMatchCache = null;
@@ -640,10 +664,14 @@ addForm.addEventListener('submit', (e) => {
 
   const list = loadAnimations();
   const relatedQuestion = getQuestionFromRef(questionSelect.value) || matchAnimationToQuestion(title, html);
-  list.push({
+  const animation = {
     id: genId(), title, desc: descInput.value.trim(), html, ts: Date.now(),
     questionRef: relatedQuestion?.ref || null,
-  });
+  };
+  const deletedIds = new Set(loadDeletedAnimationIds());
+  deletedIds.delete(animation.id);
+  saveDeletedAnimationIds(deletedIds);
+  list.push(animation);
   saveAnimations(list);
   animationMatchCache = null;
 
@@ -698,6 +726,241 @@ function toast(msg, err = false) {
   }, 3000);
 }
 
+function currentCloudState() {
+  return {
+    questionProgress,
+    animations: loadAnimations(),
+    deletedAnimationIds: loadDeletedAnimationIds(),
+  };
+}
+
+function activateLocalSyncAccount(username) {
+  if (!username) return;
+  const previous = localStorage.getItem(SYNC_ACCOUNT_KEY);
+  if (previous && previous !== username) {
+    localStorage.removeItem(QUESTION_PROGRESS_KEY);
+    localStorage.removeItem(STORE_KEY);
+    localStorage.removeItem(DELETED_ANIMATIONS_KEY);
+    questionProgress = {};
+  }
+  localStorage.setItem(SYNC_ACCOUNT_KEY, username);
+}
+
+function mergeCloudStates(remote, local) {
+  remote = remote && typeof remote === 'object' ? remote : {};
+  local = local && typeof local === 'object' ? local : {};
+  const questionProgress = { ...(remote.questionProgress || {}) };
+  for (const [id, record] of Object.entries(local.questionProgress || {})) {
+    if (!questionProgress[id] || record.lastAt > questionProgress[id].lastAt) questionProgress[id] = record;
+  }
+
+  const deletedAnimationIds = new Set([
+    ...(Array.isArray(remote.deletedAnimationIds) ? remote.deletedAnimationIds : []),
+    ...(Array.isArray(local.deletedAnimationIds) ? local.deletedAnimationIds : []),
+  ]);
+  const animationsById = new Map();
+  for (const animation of [...(remote.animations || []), ...(local.animations || [])]) {
+    if (!deletedAnimationIds.has(animation.id)) animationsById.set(animation.id, animation);
+  }
+  return { questionProgress, animations: [...animationsById.values()], deletedAnimationIds: [...deletedAnimationIds] };
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function applyCloudState(state) {
+  questionProgress = state.questionProgress || {};
+  localStorage.setItem(QUESTION_PROGRESS_KEY, JSON.stringify(questionProgress));
+  localStorage.setItem(STORE_KEY, JSON.stringify(state.animations || []));
+  saveDeletedAnimationIds(new Set(state.deletedAnimationIds || []));
+  const badge = document.getElementById('anim-tab-count');
+  if (badge) badge.textContent = (state.animations || []).length;
+  animationMatchCache = null;
+  refreshQuestionProgress();
+  renderAnimCollection();
+  refreshQuestionAnimationButtons();
+}
+
+function setCloudStatus(text) {
+  const button = document.getElementById('btn-sync-status');
+  if (button) {
+    button.setAttribute('aria-label', `Cloud sync: ${text}`);
+    button.title = `Cloud sync: ${text}`;
+  }
+  const message = document.getElementById('sync-dialog-message');
+  if (message && cloudSyncAuthenticated) message.textContent = `Current status: ${text}. Changes sync to your Neon database.`;
+}
+
+async function readApiResponse(response) {
+  let body = {};
+  try { body = await response.json(); } catch { /* The API may return an empty response. */ }
+  if (!response.ok) {
+    const error = new Error(body.error || `Sync request failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+async function pullAndMergeCloudState() {
+  if (!cloudSyncAuthenticated) return;
+  const { state: remote = { questionProgress: {}, animations: [], deletedAnimationIds: [] } } =
+    await readApiResponse(await fetch('/api/state', { credentials: 'same-origin', cache: 'no-store' }));
+  const local = currentCloudState();
+  const merged = mergeCloudStates(remote, local);
+  applyCloudState(merged);
+
+  if (stableJson(merged) !== stableJson(remote)) {
+    cloudSyncAgain = true;
+    scheduleCloudSync(0);
+  } else {
+    setCloudStatus('Synced');
+  }
+}
+
+function scheduleCloudSync(delay = 700) {
+  if (!cloudSyncAuthenticated) return;
+  clearTimeout(cloudSyncTimer);
+  setCloudStatus('Syncing…');
+  cloudSyncTimer = setTimeout(pushCloudState, delay);
+}
+
+async function pushCloudState() {
+  if (!cloudSyncAuthenticated) return;
+  if (cloudSyncRunning) {
+    cloudSyncAgain = true;
+    return;
+  }
+  cloudSyncRunning = true;
+  try {
+    do {
+      cloudSyncAgain = false;
+      const version = localSyncVersion;
+      const state = currentCloudState();
+      const result = await readApiResponse(await fetch('/api/state', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state }),
+      }));
+      if (version === localSyncVersion) {
+        applyCloudState(result.state);
+        setCloudStatus('Synced');
+      } else {
+        cloudSyncAgain = true;
+      }
+    } while (cloudSyncAgain);
+  } catch (error) {
+    console.error('Cloud sync failed:', error);
+    if (error.status === 401) cloudSyncAuthenticated = false;
+    setCloudStatus(error.status === 401 ? 'Sign in to sync' : 'Sync retry');
+    toast(error.message || 'Could not sync right now. Your local data is still saved.', true);
+  } finally {
+    cloudSyncRunning = false;
+  }
+}
+
+function setSyncDialogMode(signedIn) {
+  document.getElementById('sync-dialog-title').textContent = signedIn ? 'Cloud sync is on' : 'Your sync account';
+  document.getElementById('sync-dialog-message').textContent = signedIn
+    ? `Current status: ${document.getElementById('btn-sync-status').title.replace('Cloud sync: ', '')}. This device syncs to your Neon database.`
+    : cloudSyncConfigured
+      ? 'Create a username and password, then use the same account on each device.'
+      : 'Cloud sync is not enabled for this deployment yet. Your data is being saved only on this device.';
+  document.getElementById('sync-recovery-warning').hidden = signedIn;
+  document.getElementById('sync-username-label').hidden = signedIn;
+  document.getElementById('sync-username').hidden = signedIn;
+  document.getElementById('sync-username').required = !signedIn;
+  document.getElementById('sync-password-label').hidden = signedIn;
+  document.getElementById('sync-password').hidden = signedIn;
+  document.getElementById('sync-password').required = !signedIn;
+  document.getElementById('sync-sign-in').hidden = signedIn;
+  document.getElementById('sync-register').hidden = signedIn;
+  document.getElementById('sync-sign-out').hidden = !signedIn;
+}
+
+async function initializeCloudSync() {
+  try {
+    const result = await readApiResponse(await fetch('/api/auth/session', { credentials: 'same-origin', cache: 'no-store' }));
+    cloudSyncConfigured = Boolean(result.configured);
+    cloudSyncAuthenticated = Boolean(result.authenticated && result.configured);
+    if (cloudSyncAuthenticated) activateLocalSyncAccount(result.username);
+    setCloudStatus(cloudSyncAuthenticated ? 'Syncing…' : cloudSyncConfigured ? 'Sign in to sync' : 'Sync setup');
+    if (cloudSyncAuthenticated) await pullAndMergeCloudState();
+  } catch {
+    cloudSyncConfigured = false;
+    cloudSyncAuthenticated = false;
+    setCloudStatus('Local only');
+  }
+}
+
+document.getElementById('btn-sync-status').addEventListener('click', () => {
+  setSyncDialogMode(cloudSyncAuthenticated);
+  document.getElementById('sync-dialog').showModal();
+});
+document.getElementById('sync-cancel').addEventListener('click', () => document.getElementById('sync-dialog').close());
+document.getElementById('sync-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.submitter || document.getElementById('sync-sign-in');
+  const action = button.value || 'login';
+  const username = document.getElementById('sync-username').value;
+  const password = document.getElementById('sync-password').value;
+  const buttons = [...document.querySelectorAll('#sync-form button[type="submit"]')];
+  buttons.forEach(submitButton => { submitButton.disabled = true; });
+  try {
+    const account = await readApiResponse(await fetch('/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, username, password }),
+    }));
+    cloudSyncConfigured = true;
+    cloudSyncAuthenticated = true;
+    activateLocalSyncAccount(account.username);
+    document.getElementById('sync-username').value = '';
+    document.getElementById('sync-password').value = '';
+    document.getElementById('sync-dialog').close();
+    setCloudStatus('Syncing…');
+    await pullAndMergeCloudState();
+    toast(action === 'register' ? 'Account created. Cloud sync is on for this device.' : 'Cloud sync is on for this device.');
+  } catch (error) {
+    toast(error.message || 'Could not sign in to sync.', true);
+  } finally {
+    buttons.forEach(submitButton => { submitButton.disabled = false; });
+  }
+});
+document.getElementById('sync-sign-out').addEventListener('click', async () => {
+  try {
+    await readApiResponse(await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }));
+    cloudSyncAuthenticated = false;
+    clearTimeout(cloudSyncTimer);
+    document.getElementById('sync-dialog').close();
+    setCloudStatus('Sign in to sync');
+    toast('Signed out. This device’s local data remains here.');
+  } catch (error) {
+    toast(error.message || 'Could not sign out right now.', true);
+  }
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && cloudSyncAuthenticated) pullAndMergeCloudState().catch(error => {
+    if (error.status === 401) cloudSyncAuthenticated = false;
+    setCloudStatus(error.status === 401 ? 'Sign in to sync' : 'Sync retry');
+  });
+});
+setInterval(() => {
+  if (document.visibilityState === 'visible' && cloudSyncAuthenticated) {
+    pullAndMergeCloudState().catch(error => {
+      if (error.status === 401) cloudSyncAuthenticated = false;
+      setCloudStatus(error.status === 401 ? 'Sign in to sync' : 'Sync retry');
+    });
+  }
+}, 30000);
+
 
 // ══════════════════════════════════════════════════════════════
 // BOOT
@@ -707,6 +970,7 @@ updateQuestionMatchNote(null);
 buildPatterns();
 renderAnimCollection();
 switchTab('patterns');
+void initializeCloudSync();
 
 // init animation tab badge from existing localStorage
 (function() {
