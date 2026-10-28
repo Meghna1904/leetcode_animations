@@ -11,6 +11,7 @@ let pendingQuestionId = null;
 let pendingProgressMode = 'solve';
 let cloudSyncAuthenticated = false;
 let cloudSyncConfigured = false;
+let cloudSyncUsername = '';
 let cloudSyncTimer = null;
 let cloudSyncRunning = false;
 let cloudSyncAgain = false;
@@ -789,8 +790,9 @@ function applyCloudState(state) {
 function setCloudStatus(text) {
   const button = document.getElementById('btn-sync-status');
   if (button) {
-    button.setAttribute('aria-label', `Cloud sync: ${text}`);
-    button.title = `Cloud sync: ${text}`;
+    button.textContent = cloudSyncAuthenticated && cloudSyncUsername ? `Hi, ${cloudSyncUsername}` : 'Sync';
+    button.setAttribute('aria-label', cloudSyncAuthenticated && cloudSyncUsername ? `Signed in as ${cloudSyncUsername}. Cloud sync: ${text}` : `Cloud sync: ${text}`);
+    button.title = cloudSyncAuthenticated && cloudSyncUsername ? `Hi, ${cloudSyncUsername} · Cloud sync: ${text}` : `Cloud sync: ${text}`;
   }
   const message = document.getElementById('sync-dialog-message');
   if (message && cloudSyncAuthenticated) message.textContent = `Current status: ${text}. Changes sync to your Neon database.`;
@@ -866,9 +868,9 @@ async function pushCloudState() {
 }
 
 function setSyncDialogMode(signedIn) {
-  document.getElementById('sync-dialog-title').textContent = signedIn ? 'Cloud sync is on' : 'Your sync account';
+  document.getElementById('sync-dialog-title').textContent = signedIn && cloudSyncUsername ? `Hi, ${cloudSyncUsername}!` : signedIn ? 'Cloud sync is on' : 'Your sync account';
   document.getElementById('sync-dialog-message').textContent = signedIn
-    ? `Current status: ${document.getElementById('btn-sync-status').title.replace('Cloud sync: ', '')}. This device syncs to your Neon database.`
+    ? `Current status: ${document.getElementById('btn-sync-status').title.split('Cloud sync: ').pop()}. Your progress and animations sync to this account.`
     : cloudSyncConfigured
       ? 'Create a username and password, then use the same account on each device.'
       : 'Cloud sync is not enabled for this deployment yet. Your data is being saved only on this device.';
@@ -889,6 +891,7 @@ async function initializeCloudSync() {
     const result = await readApiResponse(await fetch('/api/auth/session', { credentials: 'same-origin', cache: 'no-store' }));
     cloudSyncConfigured = Boolean(result.configured);
     cloudSyncAuthenticated = Boolean(result.authenticated && result.configured);
+    cloudSyncUsername = cloudSyncAuthenticated ? result.username || '' : '';
     if (cloudSyncAuthenticated) activateLocalSyncAccount(result.username);
     setCloudStatus(cloudSyncAuthenticated ? 'Syncing…' : cloudSyncConfigured ? 'Sign in to sync' : 'Sync setup');
     if (cloudSyncAuthenticated) await pullAndMergeCloudState();
@@ -921,6 +924,7 @@ document.getElementById('sync-form').addEventListener('submit', async event => {
     }));
     cloudSyncConfigured = true;
     cloudSyncAuthenticated = true;
+    cloudSyncUsername = account.username || username.trim();
     activateLocalSyncAccount(account.username);
     document.getElementById('sync-username').value = '';
     document.getElementById('sync-password').value = '';
@@ -938,6 +942,7 @@ document.getElementById('sync-sign-out').addEventListener('click', async () => {
   try {
     await readApiResponse(await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }));
     cloudSyncAuthenticated = false;
+    cloudSyncUsername = '';
     clearTimeout(cloudSyncTimer);
     document.getElementById('sync-dialog').close();
     setCloudStatus('Sign in to sync');
