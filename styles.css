@@ -467,6 +467,41 @@ body {
 .mistake-cause-item span { overflow-wrap: anywhere; }
 .mistake-cause-item button { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
 .mistake-cause-item button:hover { color: var(--red); }
+.today-page { max-width: 980px; margin: 0 auto; padding: 24px 20px 48px; }
+.today-heading { margin-bottom: 18px; }
+.today-heading h1 { margin-top: 5px; color: var(--text); font-size: 24px; }
+.today-heading p, .daily-routine-head p { margin-top: 5px; color: var(--muted); font: 10px 'Space Mono', monospace; }
+.daily-routine { padding: 14px; border: 1px solid var(--border2); background: var(--surface); }
+.daily-routine-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.daily-routine-head h2 { color: var(--text); font-size: 13px; }
+.daily-routine-presets { display: flex; gap: 6px; }
+.daily-routine-controls { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 14px; }
+.daily-routine-controls label { display: grid; gap: 5px; margin: 0; color: var(--muted2); font: 9px 'Space Mono', monospace; }
+.daily-routine-controls select { min-width: 84px; padding: 6px 8px; border: 1px solid var(--border2); border-radius: var(--r); background: var(--bg); color: var(--text); font: 10px 'Space Mono', monospace; }
+.daily-routine-controls label:last-child select { min-width: 210px; }
+.today-overview { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.today-overview span { padding: 7px 9px; border: 1px solid var(--border); background: var(--surface); color: var(--muted2); font: 9px 'Space Mono', monospace; }
+.today-overview strong { color: var(--text); }
+.today-plan { display: grid; gap: 12px; }
+.today-card { padding: 13px 14px; border: 1px solid var(--border2); background: var(--surface); }
+.today-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 9px; }
+.today-card-head h2 { color: var(--text); font-size: 12px; }
+.today-card-head span { color: var(--muted); font: 9px 'Space Mono', monospace; }
+.today-task-list { display: grid; gap: 7px; }
+.today-task { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; background: var(--bg); border: 1px solid var(--border); }
+.today-task-info { display: grid; gap: 3px; min-width: 0; }
+.today-task-info strong { color: var(--text); font-size: 10px; }
+.today-task-info span { color: var(--muted); font: 8px 'Space Mono', monospace; overflow-wrap: anywhere; }
+.today-task-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.today-task-actions a { color: var(--accent); font: 9px 'Space Mono', monospace; text-decoration: none; }
+.today-task-actions a:hover { text-decoration: underline; }
+.today-defer { color: var(--muted2) !important; }
+.today-practice-picker { display: flex; gap: 7px; }
+.today-practice-picker select { flex: 1; min-width: 0; padding: 7px 8px; border: 1px solid var(--border2); border-radius: var(--r); background: var(--bg); color: var(--text); font: 9px 'Space Mono', monospace; }
+.today-practice-picker select option { background: var(--surface); color: var(--text); }
+.today-empty { color: var(--muted); font: 9px 'Space Mono', monospace; }
+.today-topic-description { margin: 7px 0; color: var(--muted2); font: 9px 'Space Mono', monospace; line-height: 1.6; }
+.today-note { margin-top: 10px; color: var(--muted); font: 8px 'Space Mono', monospace; }
 .hint-check { display: flex; align-items: center; gap: 8px; color: var(--muted2); font-size: 11px; }
 .hint-check input { accent-color: var(--accent); }
 .progress-dialog .field-help { margin: 0; color: var(--accent); font: 9px 'Space Mono', monospace; }
@@ -831,4 +866,12 @@ textarea.code-box {
   #pat-controls, #anim-controls { padding: 10px 12px; }
   #pat-grid, #anim-grid { margin: 8px; }
   #anim-view-add { padding: 16px 12px; }
+  .today-page { padding: 16px 12px 32px; }
+  .daily-routine-head { flex-direction: column; }
+  .daily-routine-controls label:last-child { flex: 1 1 100%; }
+  .daily-routine-controls label:last-child select { width: 100%; }
+  .today-task { align-items: flex-start; }
+  .today-task-actions { flex-direction: column; align-items: flex-end; }
+  .today-practice-picker { flex-direction: column; align-items: stretch; }
 }
+

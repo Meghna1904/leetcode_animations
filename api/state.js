@@ -2,7 +2,7 @@ import { getDatabase } from './_lib/database.js';
 import { hasForeignOrigin, sessionUserId, parseJsonBody } from './_lib/session.js';
 
 const MAX_STATE_BYTES = 4 * 1024 * 1024;
-const EMPTY_STATE = { questionProgress: {}, animations: [], deletedAnimationIds: [] };
+const EMPTY_STATE = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {} };
 const BUILTIN_MISTAKE_TYPES = ['concept', 'edge-case', 'complexity', 'implementation', 'misread'];
 let schemaReady;
 
@@ -25,6 +25,8 @@ function validProgress(progress) {
   return Object.entries(progress).every(([id, record]) => {
     if (!id || !isObject(record) || record.id !== id || typeof record.completed !== 'boolean') return false;
     if (!Number.isInteger(record.attempts) || record.attempts < 1) return false;
+    if (record.postponeCount !== undefined && (!Number.isInteger(record.postponeCount) || record.postponeCount < 0 || record.postponeCount > 2)) return false;
+    if (record.postponedUntil !== undefined && record.postponedUntil !== null && (!Number.isFinite(record.postponedUntil) || record.postponedUntil <= 0)) return false;
     if (!Number.isFinite(record.lastMinutes) || record.lastMinutes < 1 || record.lastMinutes > 1440) return false;
     if (!Number.isInteger(record.toughness) || record.toughness < 1 || record.toughness > 5) return false;
     if (typeof record.usedHint !== 'boolean') return false;
@@ -69,8 +71,28 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function validDailyStudyLog(log) {
+  if (log === undefined) return true;
+  if (!isObject(log) || Object.keys(log).length > 5000) return false;
+  return Object.entries(log).every(([day, topics]) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(day) && Array.isArray(topics) && topics.length <= 100 &&
+    topics.every(index => Number.isInteger(index) && index >= 0 && index < 1000)
+  );
+}
+
+function validDailyPracticePlan(plan) {
+  if (plan === undefined) return true;
+  if (!isObject(plan) || Object.keys(plan).length > 5000) return false;
+  return Object.entries(plan).every(([day, entry]) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(day) && isObject(entry) &&
+    Number.isFinite(entry.updatedAt) && entry.updatedAt > 0 &&
+    Array.isArray(entry.questionIds) && entry.questionIds.length <= 100 &&
+    entry.questionIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 500)
+  );
+}
+
 function validateState(value) {
-  if (!isObject(value) || !validProgress(value.questionProgress) || !validAnimations(value.animations)) return false;
+  if (!isObject(value) || !validProgress(value.questionProgress) || !validAnimations(value.animations) || !validDailyStudyLog(value.dailyStudyLog) || !validDailyPracticePlan(value.dailyPracticePlan)) return false;
   const validDeletedIds = value.deletedAnimationIds === undefined ||
     (Array.isArray(value.deletedAnimationIds) && value.deletedAnimationIds.length <= 10000 && value.deletedAnimationIds.every(id => typeof id === 'string'));
   return validDeletedIds;
@@ -93,10 +115,25 @@ function mergeState(current, incoming) {
     if (!existing || animation.ts > existing.ts) animationsById.set(animation.id, animation);
   }
 
+  const dailyStudyLog = {};
+  for (const source of [current?.dailyStudyLog, incoming.dailyStudyLog]) {
+    if (!isObject(source)) continue;
+    for (const [day, topics] of Object.entries(source)) {
+      if (!Array.isArray(topics)) continue;
+      dailyStudyLog[day] = [...new Set([...(dailyStudyLog[day] || []), ...topics])];
+    }
+  }
+  const dailyPracticePlan = { ...(current?.dailyPracticePlan || {}) };
+  for (const [day, entry] of Object.entries(incoming.dailyPracticePlan || {})) {
+    if (!dailyPracticePlan[day] || entry.updatedAt >= dailyPracticePlan[day].updatedAt) dailyPracticePlan[day] = entry;
+  }
+
   return {
     questionProgress,
     animations: [...animationsById.values()],
     deletedAnimationIds: [...deletedAnimationIds],
+    dailyStudyLog,
+    dailyPracticePlan,
   };
 }
 
@@ -143,3 +180,4 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Could not reach the sync database.' });
   }
 }
+

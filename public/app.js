@@ -5,7 +5,12 @@ let patActiveDiff = 'all';
 const QUESTION_PROGRESS_KEY = 'dsa_question_progress_v1';
 const DELETED_ANIMATIONS_KEY = 'dsa_animations_deleted_v1';
 const SYNC_ACCOUNT_KEY = 'dsa_sync_account_v1';
+const DAILY_ROUTINE_KEY = 'dsa_daily_routine_v1';
+const DAILY_STUDY_LOG_KEY = 'dsa_daily_study_log_v1';
+const DAILY_PRACTICE_PLAN_KEY = 'dsa_daily_practice_plan_v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_DEFERRED_PER_DAY = 3;
+const MAX_DEFERRALS_PER_QUESTION = 2;
 let questionProgress = loadQuestionProgress();
 let pendingQuestionId = null;
 let pendingProgressMode = 'solve';
@@ -16,6 +21,57 @@ let cloudSyncTimer = null;
 let cloudSyncRunning = false;
 let cloudSyncAgain = false;
 let localSyncVersion = 0;
+
+function loadDailyRoutine() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DAILY_ROUTINE_KEY) || '{}');
+    return {
+      studyCount: Number.isInteger(saved.studyCount) ? Math.max(0, Math.min(2, saved.studyCount)) : 1,
+      practiceCount: Number.isInteger(saved.practiceCount) ? Math.max(0, Math.min(5, saved.practiceCount)) : 2,
+      reviewCount: Number.isInteger(saved.reviewCount) ? Math.max(0, Math.min(5, saved.reviewCount)) : 3,
+      topicIndex: saved.topicIndex === 'recommended' || Number.isInteger(saved.topicIndex) ? saved.topicIndex : 'recommended',
+    };
+  } catch {
+    return { studyCount: 1, practiceCount: 2, reviewCount: 3, topicIndex: 'recommended' };
+  }
+}
+
+let dailyRoutine = loadDailyRoutine();
+
+function localDayStart(timestamp = Date.now()) {
+  const date = new Date(timestamp);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function tomorrowStart() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 1);
+  return date.getTime();
+}
+
+function isReviewDue(record, now = Date.now()) {
+  return Boolean(record?.completed && record.dueAt <= now && (!record.postponedUntil || record.postponedUntil <= now));
+}
+
+function deferredForDay(dayStart) {
+  const nextDay = new Date(dayStart);
+  nextDay.setDate(nextDay.getDate() + 1);
+  return Object.values(questionProgress).filter(record => record.completed && record.postponedUntil >= dayStart && record.postponedUntil < nextDay.getTime());
+}
+
+function canPostpone(record) {
+  return isReviewDue(record) && (record.postponeCount || 0) < MAX_DEFERRALS_PER_QUESTION && deferredForDay(tomorrowStart()).length < MAX_DEFERRED_PER_DAY;
+}
+
+function postponeReview(id) {
+  const record = questionProgress[id];
+  if (!record || !canPostpone(record)) return;
+  record.postponeCount = (record.postponeCount || 0) + 1;
+  record.postponedUntil = tomorrowStart();
+  if (saveQuestionProgress()) refreshQuestionProgress();
+}
 
 function loadQuestionProgress() {
   try {
@@ -96,9 +152,9 @@ function latestAttempt(record) {
 function progressMeta(id) {
   const record = questionProgress[id];
   if (!record || !record.completed) return 'Not solved yet';
-  const review = record.dueAt <= Date.now()
+  const review = isReviewDue(record)
     ? 'Review due today'
-    : `Review ${fmtDate(record.dueAt)}`;
+    : `Review ${fmtDate(Math.max(record.dueAt, record.postponedUntil || 0))}`;
   const latest = latestAttempt(record);
   const categories = (latest.mistakeCategories || []).map(category => mistakeTypes.find(([key]) => key === category)?.[1] || String(category).replace(/^custom:/, '')).filter(Boolean);
   const causes = Array.isArray(latest.mistakeCauses) ? latest.mistakeCauses : [];
@@ -354,7 +410,7 @@ function updatePatInfo() {
   const vis   = document.querySelectorAll('.pat-card:not(.hide)').length;
   const probs = document.querySelectorAll('.pat-prow:not(.hide)').length;
   const solved = Object.values(questionProgress).filter(record => record.completed).length;
-  const due = Object.values(questionProgress).filter(record => record.completed && record.dueAt <= Date.now()).length;
+  const due = Object.values(questionProgress).filter(record => isReviewDue(record)).length;
   document.getElementById('pat-info').textContent = `${vis} patterns · ${probs} problems · ${solved} solved · ${due} due`;
 }
 
@@ -578,7 +634,7 @@ function addMistakeCause() {
 function renderProgressSummary() {
   renderProgressInsights();
   const records = Object.values(questionProgress).filter(record => record.completed);
-  const due = records.filter(record => record.dueAt <= Date.now());
+  const due = records.filter(record => isReviewDue(record));
   const summary = document.getElementById('progress-summary');
   const list = document.getElementById('review-list');
   const empty = document.getElementById('review-empty');
@@ -588,10 +644,11 @@ function renderProgressSummary() {
   list.replaceChildren();
 
   if (due.length === 0) {
-    const upcoming = records.map(record => record.dueAt).filter(Boolean).sort((a, b) => a - b)[0];
+    const upcoming = records.map(record => Math.max(record.dueAt || 0, record.postponedUntil || 0)).filter(Boolean).sort((a, b) => a - b)[0];
     empty.textContent = upcoming
       ? `Nothing due today. Your next review is ${fmtDate(upcoming)}.`
       : 'Mark a question solved to start your review schedule.';
+    renderToday();
     return;
   }
 
@@ -626,9 +683,373 @@ function renderProgressSummary() {
     button.className = 'fbtn review-log-button';
     button.textContent = 'Log review';
     button.addEventListener('click', () => openProgressDialog(record.id, 'review'));
-    card.append(info, button);
+    const actions = document.createElement('div');
+    actions.className = 'today-task-actions';
+    actions.appendChild(button);
+    const postpone = document.createElement('button');
+    postpone.type = 'button';
+    postpone.className = 'fbtn today-defer';
+    const allowed = canPostpone(record);
+    postpone.textContent = allowed ? 'Move to tomorrow' : (record.postponeCount || 0) >= MAX_DEFERRALS_PER_QUESTION ? 'Move limit reached' : 'Tomorrow is full';
+    postpone.disabled = !allowed;
+    postpone.title = allowed ? 'Move this review to tomorrow. Each question can be moved twice; tomorrow accepts up to three moved reviews.' : 'You can move each question twice, with up to three moved reviews on any day.';
+    postpone.addEventListener('click', () => postponeReview(record.id));
+    actions.appendChild(postpone);
+    card.append(info, actions);
     list.appendChild(card);
   });
+  renderToday();
+}
+
+function todayKey() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function loadStudyLog() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DAILY_STUDY_LOG_KEY) || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch { return {}; }
+}
+
+function saveRoutinePreferences() {
+  try { localStorage.setItem(DAILY_ROUTINE_KEY, JSON.stringify(dailyRoutine)); } catch { /* Keep current settings in memory for this visit. */ }
+  renderToday();
+}
+
+function setRoutinePreset(light) {
+  dailyRoutine = light
+    ? { ...dailyRoutine, studyCount: 1, practiceCount: 1, reviewCount: 1 }
+    : { ...dailyRoutine, studyCount: 1, practiceCount: 2, reviewCount: 3 };
+  document.getElementById('routine-study-count').value = String(dailyRoutine.studyCount);
+  document.getElementById('routine-practice-count').value = String(dailyRoutine.practiceCount);
+  document.getElementById('routine-review-count').value = String(dailyRoutine.reviewCount);
+  saveRoutinePreferences();
+}
+
+function initializeDailyRoutine() {
+  const topicSelect = document.getElementById('routine-topic');
+  const recommended = document.createElement('option');
+  recommended.value = 'recommended';
+  recommended.textContent = 'Recommended topic';
+  topicSelect.appendChild(recommended);
+  PATTERNS.forEach((pattern, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = pattern.name;
+    topicSelect.appendChild(option);
+  });
+  if (Number.isInteger(dailyRoutine.topicIndex) && dailyRoutine.topicIndex >= PATTERNS.length) dailyRoutine.topicIndex = 'recommended';
+  document.getElementById('routine-study-count').value = String(dailyRoutine.studyCount);
+  document.getElementById('routine-practice-count').value = String(dailyRoutine.practiceCount);
+  document.getElementById('routine-review-count').value = String(dailyRoutine.reviewCount);
+  topicSelect.value = String(dailyRoutine.topicIndex);
+  document.getElementById('routine-light').addEventListener('click', () => setRoutinePreset(true));
+  document.getElementById('routine-steady').addEventListener('click', () => setRoutinePreset(false));
+  document.getElementById('routine-study-count').addEventListener('change', event => {
+    dailyRoutine.studyCount = Number(event.target.value);
+    saveRoutinePreferences();
+  });
+  document.getElementById('routine-practice-count').addEventListener('change', event => {
+    dailyRoutine.practiceCount = Number(event.target.value);
+    saveRoutinePreferences();
+  });
+  document.getElementById('routine-review-count').addEventListener('change', event => {
+    dailyRoutine.reviewCount = Number(event.target.value);
+    saveRoutinePreferences();
+  });
+  topicSelect.addEventListener('change', event => {
+    dailyRoutine.topicIndex = event.target.value === 'recommended' ? 'recommended' : Number(event.target.value);
+    saveRoutinePreferences();
+  });
+}
+
+function topicCompletion(pattern) {
+  const solved = pattern.problems.filter(problem => questionProgress[questionId(problem)]?.completed).length;
+  return { solved, total: pattern.problems.length, ratio: pattern.problems.length ? solved / pattern.problems.length : 0 };
+}
+
+function plannedStudyTopics() {
+  if (!dailyRoutine.studyCount) return [];
+  if (dailyRoutine.topicIndex !== 'recommended') return [PATTERNS[dailyRoutine.topicIndex]].filter(Boolean).slice(0, dailyRoutine.studyCount);
+  return PATTERNS.map((pattern, index) => ({ pattern, index, ...topicCompletion(pattern) }))
+    .sort((a, b) => a.ratio - b.ratio || a.solved - b.solved || a.index - b.index)
+    .slice(0, dailyRoutine.studyCount)
+    .map(item => item.pattern);
+}
+
+function loadDailyPracticePlan() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DAILY_PRACTICE_PLAN_KEY) || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch { return {}; }
+}
+
+function getPracticePlanForToday() {
+  const plan = loadDailyPracticePlan();
+  return plan[todayKey()] && Array.isArray(plan[todayKey()].questionIds) ? plan[todayKey()] : { updatedAt: 0, questionIds: [] };
+}
+
+function saveTodayPracticePlan(questionIds) {
+  const plan = loadDailyPracticePlan();
+  plan[todayKey()] = { updatedAt: Date.now(), questionIds: [...new Set(questionIds)] };
+  try {
+    localStorage.setItem(DAILY_PRACTICE_PLAN_KEY, JSON.stringify(plan));
+    localSyncVersion++;
+    scheduleCloudSync();
+  } catch { toast('Could not save today’s practice plan.', true); }
+  renderToday();
+}
+
+function attemptsToday(mode) {
+  const start = localDayStart();
+  return Object.values(questionProgress).reduce((count, record) => count + recordAttempts(record).filter(attempt => attempt.at >= start && attempt.mode === mode).length, 0);
+}
+
+function addOverviewItem(container, label, value) {
+  const item = document.createElement('span');
+  const strong = document.createElement('strong');
+  strong.textContent = value;
+  item.append(strong, document.createTextNode(` ${label}`));
+  container.appendChild(item);
+}
+
+function createTodayTask(title, detail) {
+  const row = document.createElement('div');
+  row.className = 'today-task';
+  const info = document.createElement('div');
+  info.className = 'today-task-info';
+  const name = document.createElement('strong');
+  name.textContent = title;
+  const note = document.createElement('span');
+  note.textContent = detail;
+  info.append(name, note);
+  const actions = document.createElement('div');
+  actions.className = 'today-task-actions';
+  row.append(info, actions);
+  return { row, actions };
+}
+
+function createTodayCard(title, count, content) {
+  const card = document.createElement('section');
+  card.className = 'today-card';
+  const head = document.createElement('div');
+  head.className = 'today-card-head';
+  const heading = document.createElement('h2');
+  heading.textContent = title;
+  const countText = document.createElement('span');
+  countText.textContent = count;
+  head.append(heading, countText);
+  card.append(head, content);
+  return card;
+}
+
+function openPatternFromToday(pattern) {
+  const index = PATTERNS.indexOf(pattern);
+  switchTab('patterns');
+  const card = document.getElementById(`pc${index}`);
+  card?.classList.add('open');
+  card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderToday() {
+  const container = document.getElementById('today-plan');
+  if (!container) return;
+  container.replaceChildren();
+  document.getElementById('today-date-label').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const due = Object.values(questionProgress).filter(record => isReviewDue(record)).sort((a, b) => a.dueAt - b.dueAt);
+  const movedToTomorrow = deferredForDay(tomorrowStart());
+  const studyLog = loadStudyLog();
+  const practicePlan = getPracticePlanForToday();
+  const studiedToday = Array.isArray(studyLog[todayKey()]) ? studyLog[todayKey()] : [];
+  const studyTopics = plannedStudyTopics();
+  const practices = practicePlan.questionIds.map(findQuestion).filter(Boolean);
+  const studyDone = studiedToday.length;
+  const practiceDone = attemptsToday('solve');
+  const reviewDone = attemptsToday('review');
+  const overview = document.getElementById('today-overview');
+  overview.replaceChildren();
+  addOverviewItem(overview, 'study topics', `${Math.min(studyDone, dailyRoutine.studyCount)}/${dailyRoutine.studyCount}`);
+  addOverviewItem(overview, 'practice logged', `${Math.min(practiceDone, dailyRoutine.practiceCount)}/${dailyRoutine.practiceCount}`);
+  addOverviewItem(overview, 'revisions logged', `${Math.min(reviewDone, dailyRoutine.reviewCount)}/${dailyRoutine.reviewCount}`);
+  addOverviewItem(overview, 'reviews due', String(due.length));
+  addOverviewItem(overview, 'moved to tomorrow', `${movedToTomorrow.length}/${MAX_DEFERRED_PER_DAY}`);
+
+  if (dailyRoutine.studyCount) {
+    const list = document.createElement('div');
+    list.className = 'today-task-list';
+    studyTopics.forEach(pattern => {
+      const patternIndex = PATTERNS.indexOf(pattern);
+      const progress = topicCompletion(pattern);
+      const task = createTodayTask(pattern.name, `${progress.solved}/${progress.total} solved · ${pattern.trig}`);
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'fbtn';
+      open.textContent = 'Open topic';
+      open.addEventListener('click', () => openPatternFromToday(pattern));
+      const done = document.createElement('button');
+      done.type = 'button';
+      done.className = 'fbtn';
+      const isDone = studiedToday.includes(patternIndex);
+      done.textContent = isDone ? 'Studied ✓' : 'Mark studied';
+      done.addEventListener('click', () => {
+        const log = loadStudyLog();
+        const today = Array.isArray(log[todayKey()]) ? log[todayKey()] : [];
+        log[todayKey()] = isDone ? today.filter(index => index !== patternIndex) : [...new Set([...today, patternIndex])];
+        try {
+          localStorage.setItem(DAILY_STUDY_LOG_KEY, JSON.stringify(log));
+          localSyncVersion++;
+          scheduleCloudSync();
+        } catch { /* Keep routine usable if storage is full. */ }
+        renderToday();
+      });
+      task.actions.append(open, done);
+      list.appendChild(task.row);
+    });
+    container.appendChild(createTodayCard('Study', `${Math.min(studyDone, dailyRoutine.studyCount)}/${dailyRoutine.studyCount} done`, list));
+  }
+
+  if (dailyRoutine.practiceCount) {
+    const list = document.createElement('div');
+    list.className = 'today-task-list';
+    const picker = document.createElement('div');
+    picker.className = 'today-practice-picker';
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', 'Choose a problem to add to today’s practice');
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Choose a problem…';
+    select.appendChild(placeholder);
+    allQuestionEntries().forEach(entry => {
+      const id = questionId(entry.problem);
+      if (practicePlan.questionIds.includes(id)) return;
+      const option = document.createElement('option');
+      option.value = id;
+      const difficulty = entry.problem.d === 'E' ? 'Easy' : entry.problem.d === 'M' ? 'Medium' : 'Hard';
+      option.textContent = `${entry.problem.name} · ${entry.pattern.name} · ${difficulty}${questionProgress[id]?.completed ? ' · solved' : ''}`;
+      select.appendChild(option);
+    });
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'fbtn';
+    add.textContent = 'Add problem';
+    const updateAddState = () => {
+      const targetReached = practices.length >= dailyRoutine.practiceCount;
+      add.disabled = targetReached || !select.value;
+      add.title = targetReached ? 'Increase the practice target to add more problems.' : !select.value ? 'Choose a problem first.' : 'Add your chosen problem to today’s plan.';
+    };
+    select.addEventListener('change', updateAddState);
+    updateAddState();
+    add.addEventListener('click', () => {
+      if (!select.value || practices.length >= dailyRoutine.practiceCount) return;
+      saveTodayPracticePlan([...practicePlan.questionIds, select.value]);
+    });
+    picker.append(select, add);
+    list.appendChild(picker);
+
+    if (!practices.length) {
+      const empty = document.createElement('p');
+      empty.className = 'today-empty';
+      empty.textContent = 'Choose the problems you want to practice today.';
+      list.appendChild(empty);
+    } else {
+      practices.forEach(entry => {
+        const difficulty = entry.problem.d === 'E' ? 'Easy' : entry.problem.d === 'M' ? 'Medium' : 'Hard';
+        const task = createTodayTask(entry.problem.name, `${entry.pattern.name} · ${difficulty}`);
+        const link = document.createElement('a');
+        link.href = entry.problem.url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'Open problem';
+        const log = document.createElement('button');
+        log.type = 'button';
+        log.className = 'fbtn';
+        log.textContent = 'Log solve';
+        log.addEventListener('click', () => openProgressDialog(questionId(entry.problem), 'solve'));
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'fbtn today-defer';
+        remove.textContent = 'Remove';
+        remove.addEventListener('click', () => saveTodayPracticePlan(practicePlan.questionIds.filter(id => id !== questionId(entry.problem))));
+        task.actions.append(link, log, remove);
+        list.appendChild(task.row);
+      });
+    }
+    container.appendChild(createTodayCard('Problem practice', `${practiceDone}/${dailyRoutine.practiceCount} logged today`, list));
+  }
+
+  if (dailyRoutine.reviewCount) {
+    const list = document.createElement('div');
+    list.className = 'today-task-list';
+    const dueToday = due.slice(0, dailyRoutine.reviewCount);
+    if (!dueToday.length) {
+      const empty = document.createElement('p');
+      empty.className = 'today-empty';
+      const next = Object.values(questionProgress).filter(record => record.completed).map(record => Math.max(record.dueAt || 0, record.postponedUntil || 0)).filter(time => time > Date.now()).sort((a, b) => a - b)[0];
+      empty.textContent = next ? `Nothing due now. Next review is ${fmtDate(next)}.` : 'No revisions due yet. Solving a problem starts its review schedule.';
+      list.appendChild(empty);
+    } else {
+      dueToday.forEach(record => {
+        const found = findQuestion(record.id);
+        if (!found) return;
+        const task = createTodayTask(found.problem.name, `${found.pattern.name} · ${dueReason(record)}`);
+        const log = document.createElement('button');
+        log.type = 'button';
+        log.className = 'fbtn';
+        log.textContent = 'Review';
+        log.addEventListener('click', () => openProgressDialog(record.id, 'review'));
+        const move = document.createElement('button');
+        move.type = 'button';
+        move.className = 'fbtn today-defer';
+        const allowed = canPostpone(record);
+        move.textContent = allowed ? 'Move to tomorrow' : (record.postponeCount || 0) >= MAX_DEFERRALS_PER_QUESTION ? 'Move limit reached' : 'Tomorrow is full';
+        move.disabled = !allowed;
+        move.title = 'At most three reviews can be moved to tomorrow, and each problem can be moved twice.';
+        move.addEventListener('click', () => postponeReview(record.id));
+        task.actions.append(log, move);
+        list.appendChild(task.row);
+      });
+      if (due.length > dueToday.length) {
+        const note = document.createElement('p');
+        note.className = 'today-note';
+        note.textContent = `${due.length - dueToday.length} more due. Increase today’s revision target to show them.`;
+        list.appendChild(note);
+      }
+    }
+    container.appendChild(createTodayCard('Revision', `${reviewDone}/${dailyRoutine.reviewCount} logged today · ${due.length} due`, list));
+  }
+
+  const nextDue = Object.values(questionProgress).filter(record => record.completed).map(record => Math.max(record.dueAt || 0, record.postponedUntil || 0)).filter(time => time > Date.now()).sort((a, b) => a - b)[0];
+  const future = document.createElement('div');
+  future.className = 'today-task-list';
+  movedToTomorrow.forEach(record => {
+    const found = findQuestion(record.id);
+    if (!found) return;
+    const task = createTodayTask(found.problem.name, `Moved to tomorrow · move ${record.postponeCount || 0}/${MAX_DEFERRALS_PER_QUESTION}`);
+    future.appendChild(task.row);
+  });
+  if (nextDue) {
+    const next = document.createElement('p');
+    next.className = 'today-empty';
+    next.textContent = `Next scheduled revision: ${fmtDate(nextDue)}.`;
+    future.appendChild(next);
+  } else if (!movedToTomorrow.length) {
+    const empty = document.createElement('p');
+    empty.className = 'today-empty';
+    empty.textContent = 'No other reviews are scheduled yet.';
+    future.appendChild(empty);
+  }
+  if (movedToTomorrow.length && movedToTomorrow.length < MAX_DEFERRED_PER_DAY) {
+    const note = document.createElement('p');
+    note.className = 'today-note';
+    note.textContent = `${MAX_DEFERRED_PER_DAY - movedToTomorrow.length} move${MAX_DEFERRED_PER_DAY - movedToTomorrow.length === 1 ? '' : 's'} available for tomorrow. Each problem can be moved twice.`;
+    future.appendChild(note);
+  }
+  container.appendChild(createTodayCard('What’s next', movedToTomorrow.length ? 'Tomorrow' : nextDue ? fmtDate(nextDue) : 'Later', future));
+
+  const badge = document.getElementById('today-tab-count');
+  if (badge) badge.textContent = String(due.length);
 }
 
 function refreshQuestionProgress() {
@@ -639,7 +1060,7 @@ function refreshQuestionProgress() {
   document.querySelectorAll('[data-meta-id]').forEach(meta => {
     const id = decodeURIComponent(meta.dataset.metaId);
     meta.textContent = progressMeta(id);
-    meta.classList.toggle('is-due', Boolean(questionProgress[id]?.completed && questionProgress[id].dueAt <= Date.now()));
+  meta.classList.toggle('is-due', isReviewDue(questionProgress[id]));
   });
   updatePatInfo();
   renderProgressSummary();
@@ -685,6 +1106,8 @@ document.getElementById('progress-form').addEventListener('submit', event => {
   questionProgress[pendingQuestionId] = {
     id: pendingQuestionId,
     completed: true,
+    postponeCount: 0,
+    postponedUntil: null,
     attempts: (previous?.attempts || 0) + 1,
     lastMinutes: minutes,
     toughness,
@@ -954,6 +1377,7 @@ document.getElementById('btn-back-player').addEventListener('click', () => {
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
+  if (name === 'today') renderToday();
 }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -986,6 +1410,8 @@ function currentCloudState() {
     questionProgress,
     animations: loadAnimations(),
     deletedAnimationIds: loadDeletedAnimationIds(),
+    dailyStudyLog: loadStudyLog(),
+    dailyPracticePlan: loadDailyPracticePlan(),
   };
 }
 
@@ -996,6 +1422,8 @@ function activateLocalSyncAccount(username) {
     localStorage.removeItem(QUESTION_PROGRESS_KEY);
     localStorage.removeItem(STORE_KEY);
     localStorage.removeItem(DELETED_ANIMATIONS_KEY);
+    localStorage.removeItem(DAILY_STUDY_LOG_KEY);
+    localStorage.removeItem(DAILY_PRACTICE_PLAN_KEY);
     questionProgress = {};
   }
   localStorage.setItem(SYNC_ACCOUNT_KEY, username);
@@ -1017,7 +1445,19 @@ function mergeCloudStates(remote, local) {
   for (const animation of [...(remote.animations || []), ...(local.animations || [])]) {
     if (!deletedAnimationIds.has(animation.id)) animationsById.set(animation.id, animation);
   }
-  return { questionProgress, animations: [...animationsById.values()], deletedAnimationIds: [...deletedAnimationIds] };
+  const dailyStudyLog = {};
+  for (const source of [remote.dailyStudyLog, local.dailyStudyLog]) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    for (const [day, topics] of Object.entries(source)) {
+      if (!Array.isArray(topics)) continue;
+      dailyStudyLog[day] = [...new Set([...(dailyStudyLog[day] || []), ...topics])];
+    }
+  }
+  const dailyPracticePlan = { ...(remote.dailyPracticePlan || {}) };
+  for (const [day, plan] of Object.entries(local.dailyPracticePlan || {})) {
+    if (!dailyPracticePlan[day] || plan.updatedAt > dailyPracticePlan[day].updatedAt) dailyPracticePlan[day] = plan;
+  }
+  return { questionProgress, animations: [...animationsById.values()], deletedAnimationIds: [...deletedAnimationIds], dailyStudyLog, dailyPracticePlan };
 }
 
 function stableJson(value) {
@@ -1033,6 +1473,8 @@ function applyCloudState(state) {
   localStorage.setItem(QUESTION_PROGRESS_KEY, JSON.stringify(questionProgress));
   localStorage.setItem(STORE_KEY, JSON.stringify(state.animations || []));
   saveDeletedAnimationIds(new Set(state.deletedAnimationIds || []));
+  localStorage.setItem(DAILY_STUDY_LOG_KEY, JSON.stringify(state.dailyStudyLog || {}));
+  localStorage.setItem(DAILY_PRACTICE_PLAN_KEY, JSON.stringify(state.dailyPracticePlan || {}));
   const badge = document.getElementById('anim-tab-count');
   if (badge) badge.textContent = (state.animations || []).length;
   animationMatchCache = null;
@@ -1065,7 +1507,7 @@ async function readApiResponse(response) {
 
 async function pullAndMergeCloudState() {
   if (!cloudSyncAuthenticated) return;
-  const { state: remote = { questionProgress: {}, animations: [], deletedAnimationIds: [] } } =
+  const { state: remote = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {} } } =
     await readApiResponse(await fetch('/api/state', { credentials: 'same-origin', cache: 'no-store' }));
   const local = currentCloudState();
   const merged = mergeCloudStates(remote, local);
@@ -1227,9 +1669,10 @@ setInterval(() => {
 fillQuestionOptions();
 buildMistakeOptions();
 updateQuestionMatchNote(null);
+initializeDailyRoutine();
 buildPatterns();
 renderAnimCollection();
-switchTab('patterns');
+switchTab('today');
 void initializeCloudSync();
 
 // init animation tab badge from existing localStorage
@@ -1237,3 +1680,4 @@ void initializeCloudSync();
   const badge = document.getElementById('anim-tab-count');
   if (badge) badge.textContent = loadAnimations().length;
 })();
+
