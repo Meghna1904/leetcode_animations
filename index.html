@@ -65,6 +65,14 @@
       </div>
       <div id="progress-summary" class="progress-summary"></div>
     </div>
+    <div class="progress-insights">
+      <div id="difficulty-progress" class="difficulty-progress"></div>
+      <details class="topic-progress">
+        <summary>Progress by topic</summary>
+        <div id="topic-progress-list" class="topic-progress-list"></div>
+      </details>
+      <div id="mistake-summary" class="mistake-summary"></div>
+    </div>
     <div id="review-list"></div>
     <p id="review-empty" class="review-empty"></p>
   </section>
@@ -183,7 +191,22 @@
       <option value="5">5 · Very difficult</option>
     </select>
 
-    <label class="hint-check"><input id="solve-used-hint" type="checkbox"> I used a hint or solution</label>
+    <label for="solve-outcome">How did this attempt go?</label>
+    <select id="solve-outcome">
+      <option value="independent">Solved without help</option>
+      <option value="hint">Solved after a hint</option>
+      <option value="solution">Needed the solution</option>
+    </select>
+
+    <fieldset class="mistake-fieldset">
+      <legend>Mistake categories (optional)</legend>
+      <div id="mistake-categories" class="mistake-options"></div>
+      <div class="custom-mistake-row">
+        <input id="mistake-cause-input" type="text" maxlength="160" placeholder="What caused the bug on this problem?" aria-label="Bug cause for this problem">
+        <button type="button" class="fbtn" id="mistake-cause-add">Add cause</button>
+      </div>
+      <div id="mistake-causes" class="mistake-causes" aria-live="polite"></div>
+    </fieldset>
     <p id="next-review-preview" class="field-help"></p>
 
     <div class="progress-dialog-actions">

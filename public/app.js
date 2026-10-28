@@ -54,16 +54,43 @@ function expectedMinutes(difficulty) {
   return difficulty === 'E' ? 20 : difficulty === 'H' ? 50 : 35;
 }
 
-function nextReviewDays(difficulty, minutes, toughness, usedHint, previous) {
+const mistakeTypes = [
+  ['concept', 'Concept gap'],
+  ['edge-case', 'Missed edge case'],
+  ['complexity', 'Complexity / approach'],
+  ['implementation', 'Implementation bug'],
+  ['misread', 'Misread problem'],
+];
+let pendingMistakeCauses = [];
+
+function reviewIntervalDetails(difficulty, minutes, toughness, usedHint, previous) {
   const ratio = minutes / expectedMinutes(difficulty);
   const timeFactor = ratio <= 0.75 ? 1.25 : ratio <= 1.25 ? 1 : ratio <= 2 ? 0.75 : 0.55;
   const hintFactor = usedHint ? 0.75 : 1;
   const easeByToughness = [2.4, 2.05, 1.75, 1.4, 1.15];
   const firstIntervalByToughness = [14, 10, 7, 3, 1];
-  const days = previous && previous.attempts > 0
-    ? previous.intervalDays * easeByToughness[toughness - 1] * timeFactor * hintFactor
-    : firstIntervalByToughness[toughness - 1] * timeFactor * hintFactor;
-  return Math.max(1, Math.min(90, Math.round(days)));
+  const firstAttempt = !previous || previous.attempts < 1;
+  const baseDays = firstAttempt ? firstIntervalByToughness[toughness - 1] : previous.intervalDays;
+  const ratingFactor = firstAttempt ? 1 : easeByToughness[toughness - 1];
+  const rawDays = baseDays * ratingFactor * timeFactor * hintFactor;
+  const days = Math.max(1, Math.min(90, Math.round(rawDays)));
+  return { days, baseDays, firstAttempt, ratingFactor, timeFactor, hintFactor, rawDays };
+}
+
+function nextReviewDays(difficulty, minutes, toughness, usedHint, previous) {
+  return reviewIntervalDetails(difficulty, minutes, toughness, usedHint, previous).days;
+}
+
+function outcomeLabel(attempt) {
+  if (attempt?.solvedWithoutHelp === true || attempt?.outcome === 'independent') return 'solved without help';
+  if (attempt?.usedSolution || attempt?.outcome === 'solution') return 'needed solution';
+  if (attempt?.usedHint || attempt?.outcome === 'hint') return 'used a hint';
+  if (attempt?.usedHint === false) return 'solved without help';
+  return 'outcome not recorded';
+}
+
+function latestAttempt(record) {
+  return record?.history?.at(-1) || record || {};
 }
 
 function progressMeta(id) {
@@ -72,7 +99,12 @@ function progressMeta(id) {
   const review = record.dueAt <= Date.now()
     ? 'Review due today'
     : `Review ${fmtDate(record.dueAt)}`;
-  return `${review} · ${record.lastMinutes} min · toughness ${record.toughness}/5${record.usedHint ? ' · used hint' : ''}`;
+  const latest = latestAttempt(record);
+  const categories = (latest.mistakeCategories || []).map(category => mistakeTypes.find(([key]) => key === category)?.[1] || String(category).replace(/^custom:/, '')).filter(Boolean);
+  const causes = Array.isArray(latest.mistakeCauses) ? latest.mistakeCauses : [];
+  const notes = [...categories, ...causes].slice(0, 2);
+  const noteText = notes.length ? ` · ${notes.join(', ')}${categories.length + causes.length > notes.length ? '…' : ''}` : '';
+  return `${review} · ${record.attempts} attempt${record.attempts === 1 ? '' : 's'} · rating ${latest.toughness || record.toughness}/5 · ${outcomeLabel(latest)}${noteText}`;
 }
 
 function questionRef(patternIndex, problemIndex) {
@@ -338,7 +370,16 @@ function openProgressDialog(id, mode) {
   document.getElementById('progress-problem-title').textContent = `${found.problem.name} · ${found.pattern.name}`;
   document.getElementById('solve-minutes').value = record?.lastMinutes || String(expectedMinutes(found.problem.d));
   document.getElementById('solve-toughness').value = record?.toughness || '3';
-  document.getElementById('solve-used-hint').checked = Boolean(record?.usedHint);
+  const latest = latestAttempt(record);
+  const outcome = latest.outcome || (latest.solvedWithoutHelp === true ? 'independent' : latest.usedSolution ? 'solution' : latest.usedHint ? 'hint' : 'independent');
+  document.getElementById('solve-outcome').value = outcome;
+  const categories = Array.isArray(latest.mistakeCategories) ? latest.mistakeCategories : [];
+  document.querySelectorAll('[name="mistake-category"]').forEach(check => {
+    check.checked = categories.includes(check.value);
+  });
+  pendingMistakeCauses = [];
+  document.getElementById('mistake-cause-input').value = '';
+  renderMistakeCauses();
   updateReviewPreview();
   dialog.showModal();
 }
@@ -360,19 +401,190 @@ function updateReviewPreview() {
   if (!found) return;
   const minutes = Math.max(1, Number(document.getElementById('solve-minutes').value) || expectedMinutes(found.problem.d));
   const toughness = Number(document.getElementById('solve-toughness').value);
-  const usedHint = document.getElementById('solve-used-hint').checked;
-  const days = nextReviewDays(found.problem.d, minutes, toughness, usedHint, questionProgress[pendingQuestionId]);
-  const dueDate = new Date(Date.now() + days * DAY_MS);
-  document.getElementById('next-review-preview').textContent = `Next review: ${days} day${days === 1 ? '' : 's'} · ${fmtDate(dueDate.getTime())}`;
+  const outcome = document.getElementById('solve-outcome').value;
+  const usedHint = outcome !== 'independent';
+  const details = reviewIntervalDetails(found.problem.d, minutes, toughness, usedHint, questionProgress[pendingQuestionId]);
+  const dueDate = new Date(Date.now() + details.days * DAY_MS);
+  const rating = details.firstAttempt
+    ? `first interval ${details.baseDays}d for rating ${toughness}/5`
+    : `prior interval ${details.baseDays}d × ${details.ratingFactor.toFixed(2)} rating factor`;
+  const modifiers = `time × ${details.timeFactor.toFixed(2)} · ${usedHint ? 'help used × 0.75' : 'no help × 1.00'}`;
+  document.getElementById('next-review-preview').textContent = `Next review: ${details.days} day${details.days === 1 ? '' : 's'} · ${fmtDate(dueDate.getTime())}. ${rating}; ${modifiers}. Rating 1 is easiest, 5 is hardest.`;
+}
+
+function recordAttempts(record) {
+  if (Array.isArray(record?.history) && record.history.length) return record.history;
+  return record ? [record] : [];
+}
+
+function countUnaidedReviews(record) {
+  return recordAttempts(record).filter(attempt => attempt.mode === 'review' && outcomeLabel(attempt) === 'solved without help').length;
+}
+
+function progressCounts(entries) {
+  const solved = entries.filter(entry => questionProgress[questionId(entry.problem)]?.completed);
+  return {
+    total: entries.length,
+    solved: solved.length,
+    attempts: solved.reduce((sum, entry) => sum + (questionProgress[questionId(entry.problem)].attempts || 0), 0),
+    unaidedReviews: solved.reduce((sum, entry) => sum + countUnaidedReviews(questionProgress[questionId(entry.problem)]), 0),
+  };
+}
+
+function renderProgressInsights() {
+  const entries = allQuestionEntries();
+  const difficultyContainer = document.getElementById('difficulty-progress');
+  const topicContainer = document.getElementById('topic-progress-list');
+  const mistakeContainer = document.getElementById('mistake-summary');
+  difficultyContainer.replaceChildren();
+
+  [['E', 'Easy'], ['M', 'Medium'], ['H', 'Hard']].forEach(([code, label]) => {
+    const counts = progressCounts(entries.filter(entry => entry.problem.d === code));
+    const card = document.createElement('div');
+    card.className = 'difficulty-card';
+    const head = document.createElement('div');
+    head.className = 'difficulty-card-head';
+    const name = document.createElement('strong');
+    name.textContent = label;
+    const fraction = document.createElement('span');
+    fraction.textContent = `${counts.solved}/${counts.total}`;
+    head.append(name, fraction);
+    const track = document.createElement('div');
+    track.className = 'difficulty-card-track';
+    const fill = document.createElement('span');
+    fill.style.width = `${counts.total ? counts.solved / counts.total * 100 : 0}%`;
+    track.appendChild(fill);
+    const meta = document.createElement('div');
+    meta.className = 'difficulty-card-meta';
+    meta.textContent = `${counts.attempts} attempts · ${counts.unaidedReviews} reviews solved without help`;
+    card.append(head, track, meta);
+    difficultyContainer.appendChild(card);
+  });
+
+  topicContainer.replaceChildren();
+  PATTERNS.forEach(pattern => {
+    const counts = progressCounts(pattern.problems.map(problem => ({ problem })));
+    const row = document.createElement('div');
+    row.className = 'topic-progress-row';
+    const head = document.createElement('div');
+    head.className = 'topic-progress-head';
+    const name = document.createElement('span');
+    name.textContent = pattern.name;
+    const fraction = document.createElement('span');
+    fraction.textContent = `${counts.solved}/${counts.total}`;
+    head.append(name, fraction);
+    const track = document.createElement('div');
+    track.className = 'topic-progress-track';
+    const fill = document.createElement('span');
+    fill.style.width = `${counts.total ? counts.solved / counts.total * 100 : 0}%`;
+    track.appendChild(fill);
+    row.append(head, track);
+    topicContainer.appendChild(row);
+  });
+
+  mistakeContainer.replaceChildren();
+  const categoryCounts = new Map(mistakeTypes.map(([key, label]) => [key, { label, count: 0 }]));
+  Object.values(questionProgress).forEach(record => recordAttempts(record).forEach(attempt => {
+    (Array.isArray(attempt.mistakeCategories) ? attempt.mistakeCategories : []).forEach(category => {
+      if (categoryCounts.has(category)) categoryCounts.get(category).count++;
+    });
+  }));
+  const frequentMistakes = [...categoryCounts.values()].filter(item => item.count).sort((a, b) => b.count - a.count);
+  if (frequentMistakes.length) {
+    const label = document.createElement('span');
+    label.textContent = 'Mistakes logged:';
+    mistakeContainer.appendChild(label);
+    frequentMistakes.forEach(item => {
+      const chip = document.createElement('span');
+      chip.className = 'mistake-chip';
+      chip.textContent = `${item.label} ${item.count}`;
+      mistakeContainer.appendChild(chip);
+    });
+  }
+}
+
+function dueStatus(record) {
+  const overdueDays = Math.floor((Date.now() - record.dueAt) / DAY_MS);
+  return overdueDays <= 0 ? 'Due today' : `${overdueDays} day${overdueDays === 1 ? '' : 's'} overdue`;
+}
+
+function dueReason(record) {
+  const attempt = latestAttempt(record);
+  const schedule = attempt.schedule;
+  if (!schedule) return `Rating ${record.toughness}/5 and ${outcomeLabel(attempt)} set a ${record.intervalDays}-day interval.`;
+  const rating = schedule.firstAttempt
+    ? `rating ${attempt.toughness}/5 set the first gap to ${schedule.baseDays}d`
+    : `rating ${attempt.toughness}/5 applied ×${schedule.ratingFactor.toFixed(2)} to the prior ${schedule.baseDays}d gap`;
+  const help = schedule.hintFactor < 1 ? 'help used ×0.75' : 'no help ×1.00';
+  return `${rating}; time ×${schedule.timeFactor.toFixed(2)}; ${help} → ${record.intervalDays}d. ${dueStatus(record)}.`;
+}
+
+function buildMistakeOptions(selected = new Set()) {
+  const container = document.getElementById('mistake-categories');
+  container.replaceChildren();
+  mistakeTypes.forEach(([value, label]) => {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'mistake-option';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.name = 'mistake-category';
+    check.value = value;
+    check.checked = selected.has(value);
+    const text = document.createElement('span');
+    text.textContent = label;
+    wrapper.append(check, text);
+    container.appendChild(wrapper);
+  });
+}
+
+function renderMistakeCauses() {
+  const container = document.getElementById('mistake-causes');
+  container.replaceChildren();
+  pendingMistakeCauses.forEach((cause, index) => {
+    const item = document.createElement('div');
+    item.className = 'mistake-cause-item';
+    const text = document.createElement('span');
+    text.textContent = cause;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `Remove bug cause ${index + 1}`);
+    remove.textContent = '×';
+    remove.addEventListener('click', () => {
+      pendingMistakeCauses.splice(index, 1);
+      renderMistakeCauses();
+    });
+    item.append(text, remove);
+    container.appendChild(item);
+  });
+}
+
+function addMistakeCause() {
+  const input = document.getElementById('mistake-cause-input');
+  const cause = input.value.trim().slice(0, 160);
+  if (!cause) {
+    toast('Enter a bug cause first.', true);
+    input.focus();
+    return;
+  }
+  if (pendingMistakeCauses.length >= 10) {
+    toast('Add up to 10 bug causes for one attempt.', true);
+    return;
+  }
+  pendingMistakeCauses.push(cause);
+  renderMistakeCauses();
+  input.value = '';
 }
 
 function renderProgressSummary() {
+  renderProgressInsights();
   const records = Object.values(questionProgress).filter(record => record.completed);
   const due = records.filter(record => record.dueAt <= Date.now());
   const summary = document.getElementById('progress-summary');
   const list = document.getElementById('review-list');
   const empty = document.getElementById('review-empty');
-  summary.textContent = `${records.length} solved · ${due.length} due today`;
+  const attempts = records.reduce((sum, record) => sum + (record.attempts || 0), 0);
+  const unaidedReviews = records.reduce((sum, record) => sum + countUnaidedReviews(record), 0);
+  summary.textContent = `${records.length} solved · ${due.length} due · ${attempts} attempts · ${unaidedReviews} unaided reviews`;
   list.replaceChildren();
 
   if (due.length === 0) {
@@ -398,8 +610,16 @@ function renderProgressSummary() {
     link.rel = 'noopener';
     link.textContent = found.problem.name;
     const details = document.createElement('span');
-    details.textContent = `${found.pattern.name} · last took ${record.lastMinutes} min · toughness ${record.toughness}/5`;
-    info.append(link, details);
+    const latest = latestAttempt(record);
+    const categories = Array.isArray(latest.mistakeCategories) ? latest.mistakeCategories : [];
+    const categoryLabels = categories.map(category => mistakeTypes.find(([key]) => key === category)?.[1] || String(category).replace(/^custom:/, '')).filter(Boolean);
+    details.textContent = `${found.pattern.name} · ${record.attempts} attempts · last ${outcomeLabel(latest)}${categoryLabels.length ? ` · ${categoryLabels.join(', ')}` : ''}`;
+    const causes = Array.isArray(latest.mistakeCauses) ? latest.mistakeCauses : [];
+    if (causes.length) details.textContent += ` · cause: ${causes.join('; ')}`;
+    const why = document.createElement('span');
+    why.className = 'review-card-why';
+    why.textContent = dueReason(record);
+    info.append(link, details, why);
 
     const button = document.createElement('button');
     button.type = 'button';
@@ -433,13 +653,35 @@ document.getElementById('progress-form').addEventListener('submit', event => {
   if (!found) return;
   const minutes = Number(document.getElementById('solve-minutes').value);
   const toughness = Number(document.getElementById('solve-toughness').value);
-  const usedHint = document.getElementById('solve-used-hint').checked;
+  const outcome = document.getElementById('solve-outcome').value;
+  const usedHint = outcome !== 'independent';
   if (!Number.isFinite(minutes) || minutes < 1 || minutes > 1440 || toughness < 1 || toughness > 5) return;
 
   const previous = questionProgress[pendingQuestionId];
-  const intervalDays = nextReviewDays(found.problem.d, minutes, toughness, usedHint, previous);
+  const schedule = reviewIntervalDetails(found.problem.d, minutes, toughness, usedHint, previous);
+  const intervalDays = schedule.days;
   const now = Date.now();
-  const attempt = { at: now, minutes, toughness, usedHint, mode: pendingProgressMode };
+  const mistakeCategories = [...document.querySelectorAll('[name="mistake-category"]:checked')].map(check => check.value);
+  const attempt = {
+    at: now,
+    minutes,
+    toughness,
+    usedHint,
+    usedSolution: outcome === 'solution',
+    solvedWithoutHelp: outcome === 'independent',
+    outcome,
+    mistakeCategories,
+    mistakeCauses: [...pendingMistakeCauses],
+    mode: pendingProgressMode,
+    intervalDays,
+    schedule: {
+      firstAttempt: schedule.firstAttempt,
+      baseDays: schedule.baseDays,
+      ratingFactor: schedule.ratingFactor,
+      timeFactor: schedule.timeFactor,
+      hintFactor: schedule.hintFactor,
+    },
+  };
   questionProgress[pendingQuestionId] = {
     id: pendingQuestionId,
     completed: true,
@@ -447,6 +689,11 @@ document.getElementById('progress-form').addEventListener('submit', event => {
     lastMinutes: minutes,
     toughness,
     usedHint,
+    usedSolution: outcome === 'solution',
+    solvedWithoutHelp: outcome === 'independent',
+    outcome,
+    mistakeCategories,
+    mistakeCauses: [...pendingMistakeCauses],
     intervalDays,
     lastAt: now,
     dueAt: now + intervalDays * DAY_MS,
@@ -466,7 +713,14 @@ document.getElementById('progress-dialog').addEventListener('cancel', event => {
   event.preventDefault();
   closeProgressDialog();
 });
-['solve-minutes', 'solve-toughness', 'solve-used-hint'].forEach(id => {
+document.getElementById('mistake-cause-add').addEventListener('click', addMistakeCause);
+document.getElementById('mistake-cause-input').addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    addMistakeCause();
+  }
+});
+['solve-minutes', 'solve-toughness', 'solve-outcome'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateReviewPreview);
   document.getElementById(id).addEventListener('change', updateReviewPreview);
 });
@@ -971,6 +1225,7 @@ setInterval(() => {
 // BOOT
 // ══════════════════════════════════════════════════════════════
 fillQuestionOptions();
+buildMistakeOptions();
 updateQuestionMatchNote(null);
 buildPatterns();
 renderAnimCollection();

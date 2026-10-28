@@ -3,6 +3,7 @@ import { hasForeignOrigin, sessionUserId, parseJsonBody } from './_lib/session.j
 
 const MAX_STATE_BYTES = 4 * 1024 * 1024;
 const EMPTY_STATE = { questionProgress: {}, animations: [], deletedAnimationIds: [] };
+const BUILTIN_MISTAKE_TYPES = ['concept', 'edge-case', 'complexity', 'implementation', 'misread'];
 let schemaReady;
 
 async function ensureSchema(sql) {
@@ -22,18 +23,34 @@ async function ensureSchema(sql) {
 function validProgress(progress) {
   if (!isObject(progress)) return false;
   return Object.entries(progress).every(([id, record]) => {
-    if (!id || !isObject(record) || record.id !== id || record.completed !== true) return false;
+    if (!id || !isObject(record) || record.id !== id || typeof record.completed !== 'boolean') return false;
     if (!Number.isInteger(record.attempts) || record.attempts < 1) return false;
     if (!Number.isFinite(record.lastMinutes) || record.lastMinutes < 1 || record.lastMinutes > 1440) return false;
     if (!Number.isInteger(record.toughness) || record.toughness < 1 || record.toughness > 5) return false;
     if (typeof record.usedHint !== 'boolean') return false;
     if (!Number.isFinite(record.intervalDays) || record.intervalDays < 1 || record.intervalDays > 90) return false;
-    if (!Number.isFinite(record.lastAt) || record.lastAt <= 0 || !Number.isFinite(record.dueAt) || record.dueAt <= 0) return false;
+    if (!Number.isFinite(record.lastAt) || record.lastAt <= 0) return false;
+    if (record.completed ? (!Number.isFinite(record.dueAt) || record.dueAt <= 0) : record.dueAt !== null) return false;
     return Array.isArray(record.history) && record.history.length <= 20 && record.history.every(attempt =>
       isObject(attempt) && Number.isFinite(attempt.at) && attempt.at > 0 &&
       Number.isFinite(attempt.minutes) && attempt.minutes >= 1 && attempt.minutes <= 1440 &&
       Number.isInteger(attempt.toughness) && attempt.toughness >= 1 && attempt.toughness <= 5 &&
-      typeof attempt.usedHint === 'boolean' && ['solve', 'review'].includes(attempt.mode)
+      typeof attempt.usedHint === 'boolean' && ['solve', 'review'].includes(attempt.mode) &&
+      (attempt.outcome === undefined || ['independent', 'hint', 'solution'].includes(attempt.outcome)) &&
+      (attempt.solvedWithoutHelp === undefined || typeof attempt.solvedWithoutHelp === 'boolean') &&
+      (attempt.usedSolution === undefined || typeof attempt.usedSolution === 'boolean') &&
+      (attempt.intervalDays === undefined || (Number.isFinite(attempt.intervalDays) && attempt.intervalDays >= 1 && attempt.intervalDays <= 90)) &&
+      (attempt.mistakeCategories === undefined || (Array.isArray(attempt.mistakeCategories) && attempt.mistakeCategories.length <= 5 && attempt.mistakeCategories.every(category =>
+        BUILTIN_MISTAKE_TYPES.includes(category) || (typeof category === 'string' && /^custom:.{1,40}$/i.test(category))
+      ))) &&
+      (attempt.mistakeCauses === undefined || (Array.isArray(attempt.mistakeCauses) && attempt.mistakeCauses.length <= 10 && attempt.mistakeCauses.every(cause => typeof cause === 'string' && cause.trim().length > 0 && cause.length <= 160))) &&
+      (attempt.schedule === undefined || (isObject(attempt.schedule) &&
+        typeof attempt.schedule.firstAttempt === 'boolean' &&
+        Number.isFinite(attempt.schedule.baseDays) && attempt.schedule.baseDays >= 1 && attempt.schedule.baseDays <= 90 &&
+        Number.isFinite(attempt.schedule.ratingFactor) && attempt.schedule.ratingFactor > 0 &&
+        Number.isFinite(attempt.schedule.timeFactor) && attempt.schedule.timeFactor > 0 &&
+        Number.isFinite(attempt.schedule.hintFactor) && attempt.schedule.hintFactor > 0
+      ))
     );
   });
 }
@@ -54,8 +71,9 @@ function isObject(value) {
 
 function validateState(value) {
   if (!isObject(value) || !validProgress(value.questionProgress) || !validAnimations(value.animations)) return false;
-  return value.deletedAnimationIds === undefined ||
+  const validDeletedIds = value.deletedAnimationIds === undefined ||
     (Array.isArray(value.deletedAnimationIds) && value.deletedAnimationIds.length <= 10000 && value.deletedAnimationIds.every(id => typeof id === 'string'));
+  return validDeletedIds;
 }
 
 function mergeState(current, incoming) {

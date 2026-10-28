@@ -254,11 +254,31 @@ body {
 #review-heading { margin: 4px 0 0; color: var(--text); font-size: 15px; }
 .progress-summary { color: var(--muted); font: 10px 'Space Mono', monospace; text-align: right; }
 .review-empty { margin: 12px 0 0; color: var(--muted); font: 10px 'Space Mono', monospace; }
+.progress-insights { display: grid; gap: 10px; margin-top: 12px; }
+.difficulty-progress { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.difficulty-card { padding: 9px 10px; background: var(--bg); border: 1px solid var(--border); }
+.difficulty-card-head { display: flex; justify-content: space-between; gap: 8px; color: var(--text); font-size: 10px; }
+.difficulty-card-head span:last-child { color: var(--muted); font: 9px 'Space Mono', monospace; }
+.difficulty-card-track, .topic-progress-track { height: 4px; margin-top: 7px; background: var(--border2); overflow: hidden; }
+.difficulty-card-track span, .topic-progress-track span { display: block; height: 100%; background: var(--accent); }
+.difficulty-card-meta { margin-top: 6px; color: var(--muted); font: 8px 'Space Mono', monospace; line-height: 1.5; }
+.topic-progress { border-top: 1px solid var(--border); padding-top: 8px; }
+.topic-progress summary { color: var(--muted2); cursor: pointer; font: 9px 'Space Mono', monospace; }
+.topic-progress-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 12px; padding-top: 9px; }
+.topic-progress-row { min-width: 0; }
+.topic-progress-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted2); font-size: 9px; }
+.topic-progress-head span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic-progress-head span:last-child { flex: 0 0 auto; color: var(--muted); font: 8px 'Space Mono', monospace; }
+.topic-progress-track { margin-top: 4px; height: 3px; }
+.mistake-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; color: var(--muted); font: 8px 'Space Mono', monospace; }
+.mistake-summary:empty { display: none; }
+.mistake-chip { padding: 3px 6px; border: 1px solid var(--border2); color: var(--muted2); }
 #review-list { display: grid; gap: 6px; margin-top: 10px; }
 .review-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid var(--border); background: var(--bg); }
 .review-card-info { display: grid; gap: 4px; min-width: 0; }
 .review-card-info a { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .review-card-info span { color: var(--muted); font: 9px 'Space Mono', monospace; }
+.review-card-why { color: var(--accent2) !important; }
 .review-log-button { flex: 0 0 auto; color: var(--accent) !important; }
 
 /* Pattern grid */
@@ -433,6 +453,20 @@ body {
   width: 100%; padding: 9px 10px; border: 1px solid var(--border2); border-radius: var(--r);
   background: var(--bg); color: var(--text); font: 11px 'Space Mono', monospace;
 }
+.mistake-fieldset { border: 1px solid var(--border2); padding: 8px 9px 9px; }
+.mistake-fieldset legend { padding: 0 4px; color: var(--muted2); font: 9px 'Space Mono', monospace; }
+.mistake-options { display: flex; flex-wrap: wrap; gap: 7px 12px; }
+.mistake-option { display: inline-flex; align-items: center; gap: 5px; margin: 0; color: var(--muted2); font: 9px 'Space Mono', monospace; text-transform: none; letter-spacing: 0; }
+.mistake-option input { accent-color: var(--accent); }
+.custom-mistake-row { display: flex; gap: 6px; margin-top: 9px; }
+.custom-mistake-row input { min-width: 0; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border2); border-radius: var(--r); color: var(--text); font: 10px 'Space Mono', monospace; }
+.custom-mistake-row input:focus { outline: 1px solid var(--accent); }
+.mistake-causes { display: grid; gap: 4px; margin-top: 6px; }
+.mistake-causes:empty { display: none; }
+.mistake-cause-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px; background: var(--bg); color: var(--muted2); font: 9px 'Space Mono', monospace; }
+.mistake-cause-item span { overflow-wrap: anywhere; }
+.mistake-cause-item button { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.mistake-cause-item button:hover { color: var(--red); }
 .hint-check { display: flex; align-items: center; gap: 8px; color: var(--muted2); font-size: 11px; }
 .hint-check input { accent-color: var(--accent); }
 .progress-dialog .field-help { margin: 0; color: var(--accent); font: 9px 'Space Mono', monospace; }
