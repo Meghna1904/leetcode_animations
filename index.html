@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DSA Hub — Patterns & Animations</title>
+  <title>DSA Hub — Patterns, Topics & Animations</title>
   <meta name="description" content="A personal DSA reference: 51 LC patterns + a browsable collection of interactive algorithm animations." />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -26,6 +26,9 @@
     <button class="tab-btn" data-tab="patterns">
       <span>Patterns</span>
       <span class="tab-badge" id="pat-tab-count">51</span>
+    </button>
+    <button class="tab-btn" data-tab="topics">
+      <span>Topics</span>
     </button>
     <button class="tab-btn" data-tab="animations">
       <span>Animations</span>
@@ -71,10 +74,6 @@
     </div>
     <div class="progress-insights">
       <div id="difficulty-progress" class="difficulty-progress"></div>
-      <details class="topic-progress">
-        <summary>Progress by topic</summary>
-        <div id="topic-progress-list" class="topic-progress-list"></div>
-      </details>
       <div id="mistake-summary" class="mistake-summary"></div>
     </div>
     <div id="review-list"></div>
@@ -87,32 +86,24 @@
   <div class="pat-empty" id="pat-empty">no results</div>
 </div>
 
+<div id="view-topics" class="view">
+  <main class="topics-page">
+    <header class="topics-heading">
+      <div class="review-kicker">TOPIC MASTERY</div>
+      <h1>Topics</h1>
+      <p>Browse by area, then expand a pattern to see its difficulty targets and remaining problems.</p>
+    </header>
+    <div id="topic-area-list" class="topic-area-list"></div>
+  </main>
+</div>
+
 <div id="view-today" class="view active">
   <main class="today-page">
     <header class="today-heading">
-      <div class="review-kicker">DAILY PRACTICE</div>
+      <div class="review-kicker">DAILY REVIEW</div>
       <h1>Today</h1>
       <p id="today-date-label"></p>
     </header>
-    <section class="daily-routine" aria-labelledby="daily-routine-heading">
-      <div class="daily-routine-head">
-        <div>
-          <h2 id="daily-routine-heading">Choose your pace</h2>
-          <p>Keep it light on busy days. An unfinished plan carries no penalty.</p>
-        </div>
-        <div class="daily-routine-presets">
-          <button type="button" class="fbtn" id="routine-light">Light day</button>
-          <button type="button" class="fbtn" id="routine-steady">Steady day</button>
-        </div>
-      </div>
-      <div class="daily-routine-controls">
-        <label>Study topics <select id="routine-study-count"><option>0</option><option>1</option><option>2</option></select></label>
-        <label>Practice problems <select id="routine-practice-count"><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
-        <label>Revisions <select id="routine-review-count"><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
-        <label>Study topic <select id="routine-topic"></select></label>
-      </div>
-    </section>
-    <div id="today-overview" class="today-overview"></div>
     <div id="today-plan" class="today-plan"></div>
   </main>
 </div>
