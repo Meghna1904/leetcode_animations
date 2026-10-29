@@ -484,6 +484,7 @@ const TOPIC_AREAS = [
   { name: 'Math, Bits & Geometry', patterns: ['Bit Manipulation', 'Basics + Maths', 'Math & Number Theory', 'Combinatorics & Counting', 'Bitmask DP', 'Random / Reservoir Sampling', 'Geometry / Computational Geometry'] },
   { name: 'Other Topics', patterns: ['Concurrency Patterns'] },
 ];
+let activeTopicArea = 'All Topics';
 
 function uniquePatternEntries(patterns) {
   const unique = new Map();
@@ -549,7 +550,10 @@ function renderPatternMastery(pattern, parent) {
     row.className = 'topic-problem-row';
     const info = document.createElement('div');
     info.className = 'topic-problem-info';
-    const problemName = document.createElement('span');
+    const problemName = document.createElement('a');
+    problemName.href = problem.url;
+    problemName.target = '_blank';
+    problemName.rel = 'noopener';
     problemName.textContent = problem.name;
     const state = document.createElement('span');
     const due = isReviewDue(record);
@@ -575,10 +579,62 @@ function renderPatternMastery(pattern, parent) {
   parent.appendChild(item);
 }
 
+function renderTopicAreas() {
+  const tabs = document.getElementById('topic-tabs');
+  const container = document.getElementById('topic-area-list');
+  if (!tabs || !container) return;
+  tabs.replaceChildren();
+  container.replaceChildren();
+
+  const areas = [{ name: 'All Topics', patterns: PATTERNS }, ...TOPIC_AREAS.map(area => ({
+    name: area.name,
+    patterns: PATTERNS.filter(pattern => area.patterns.includes(pattern.name)),
+  })).filter(area => area.patterns.length)];
+  if (!areas.some(area => area.name === activeTopicArea)) activeTopicArea = 'All Topics';
+
+  areas.forEach(area => {
+    const counts = progressCounts(uniquePatternEntries(area.patterns));
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = `topic-tab${area.name === activeTopicArea ? ' active' : ''}`;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(area.name === activeTopicArea));
+    tab.setAttribute('aria-controls', 'topic-area-list');
+    const label = document.createElement('span');
+    label.textContent = area.name;
+    const progress = document.createElement('span');
+    progress.textContent = `${counts.solved}/${counts.total}`;
+    tab.append(label, progress);
+    tab.addEventListener('click', () => {
+      activeTopicArea = area.name;
+      renderTopicAreas();
+    });
+    tabs.appendChild(tab);
+  });
+
+  const selected = areas.find(area => area.name === activeTopicArea) || areas[0];
+  const entries = uniquePatternEntries(selected.patterns);
+  const counts = progressCounts(entries);
+  const heading = document.createElement('div');
+  heading.className = 'topic-selected-heading';
+  const title = document.createElement('h2');
+  title.textContent = selected.name;
+  const status = document.createElement('span');
+  status.textContent = counts.solved === counts.total ? `Complete · ${counts.total}/${counts.total}` : `${counts.solved}/${counts.total} solved · ${counts.total - counts.solved} left`;
+  heading.append(title, status);
+  container.setAttribute('role', 'tabpanel');
+  container.setAttribute('aria-label', `${selected.name} topic patterns`);
+  container.append(heading, createTopicProgressBar(counts));
+
+  const patternsList = document.createElement('div');
+  patternsList.className = 'topic-area-patterns';
+  selected.patterns.forEach(pattern => renderPatternMastery(pattern, patternsList));
+  container.appendChild(patternsList);
+}
+
 function renderProgressInsights() {
   const entries = allQuestionEntries();
   const difficultyContainer = document.getElementById('difficulty-progress');
-  const topicContainer = document.getElementById('topic-area-list');
   const mistakeContainer = document.getElementById('mistake-summary');
   difficultyContainer.replaceChildren();
 
@@ -605,43 +661,7 @@ function renderProgressInsights() {
     difficultyContainer.appendChild(card);
   });
 
-  topicContainer.replaceChildren();
-  const groupedPatterns = new Set();
-  TOPIC_AREAS.forEach(area => {
-    const patterns = PATTERNS.filter(pattern => area.patterns.includes(pattern.name));
-    if (!patterns.length) return;
-    patterns.forEach(pattern => groupedPatterns.add(pattern.name));
-    const entries = uniquePatternEntries(patterns);
-    const counts = progressCounts(entries);
-    const group = document.createElement('details');
-    group.className = 'topic-area';
-    const summary = document.createElement('summary');
-    const name = document.createElement('span');
-    name.textContent = area.name;
-    const status = document.createElement('span');
-    status.textContent = counts.solved === counts.total ? `Complete · ${counts.total}/${counts.total}` : `${counts.solved}/${counts.total} · ${counts.total - counts.solved} left`;
-    summary.append(name, status);
-    const patternsList = document.createElement('div');
-    patternsList.className = 'topic-area-patterns';
-    patterns.forEach(pattern => renderPatternMastery(pattern, patternsList));
-    group.append(summary, createTopicProgressBar(counts), patternsList);
-    topicContainer.appendChild(group);
-  });
-
-  const ungrouped = PATTERNS.filter(pattern => !groupedPatterns.has(pattern.name));
-  if (ungrouped.length) {
-    const entries = uniquePatternEntries(ungrouped);
-    const counts = progressCounts(entries);
-    const group = document.createElement('details');
-    group.className = 'topic-area';
-    const summary = document.createElement('summary');
-    summary.textContent = `Other patterns · ${counts.solved}/${counts.total} · ${counts.total - counts.solved} left`;
-    const patternsList = document.createElement('div');
-    patternsList.className = 'topic-area-patterns';
-    ungrouped.forEach(pattern => renderPatternMastery(pattern, patternsList));
-    group.append(summary, createTopicProgressBar(counts), patternsList);
-    topicContainer.appendChild(group);
-  }
+  renderTopicAreas();
 
   mistakeContainer.replaceChildren();
   const categoryCounts = new Map(mistakeTypes.map(([key, label]) => [key, { label, count: 0 }]));
