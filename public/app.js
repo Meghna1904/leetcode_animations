@@ -7,6 +7,7 @@ const DELETED_ANIMATIONS_KEY = 'dsa_animations_deleted_v1';
 const SYNC_ACCOUNT_KEY = 'dsa_sync_account_v1';
 const DAILY_STUDY_LOG_KEY = 'dsa_daily_study_log_v1';
 const DAILY_PRACTICE_PLAN_KEY = 'dsa_daily_practice_plan_v1';
+const TOPIC_STUDY_KEY = 'dsa_topic_study_content_v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DEFERRED_PER_DAY = 3;
 const MAX_DEFERRALS_PER_QUESTION = 2;
@@ -20,6 +21,15 @@ let cloudSyncTimer = null;
 let cloudSyncRunning = false;
 let cloudSyncAgain = false;
 let localSyncVersion = 0;
+let topicStudyContent = loadTopicStudyContent();
+let currentStudyTopic = null;
+
+function loadTopicStudyContent() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TOPIC_STUDY_KEY) || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch { return {}; }
+}
 
 function localDayStart(timestamp = Date.now()) {
   const date = new Date(timestamp);
@@ -555,10 +565,16 @@ function renderPatternMastery(pattern, parent) {
     problemName.target = '_blank';
     problemName.rel = 'noopener';
     problemName.textContent = problem.name;
+    const title = document.createElement('div');
+    title.className = 'topic-problem-title';
+    const difficulty = document.createElement('span');
+    difficulty.className = `diff-badge diff-${problem.d}`;
+    difficulty.textContent = problem.d === 'E' ? 'Easy' : problem.d === 'M' ? 'Med' : 'Hard';
+    title.append(problemName, difficulty);
     const state = document.createElement('span');
     const due = isReviewDue(record);
-    state.textContent = `${problem.d === 'E' ? 'Easy' : problem.d === 'M' ? 'Medium' : 'Hard'} · ${due ? 'Revision due' : record?.completed ? `Solved · next ${fmtDate(Math.max(record.dueAt || 0, record.postponedUntil || 0))}` : 'Not solved'}`;
-    info.append(problemName, state);
+    state.textContent = due ? 'Revision due' : record?.completed ? `Solved · next ${fmtDate(Math.max(record.dueAt || 0, record.postponedUntil || 0))}` : 'Not solved';
+    info.append(title, state);
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'fbtn topic-problem-action';
@@ -577,6 +593,70 @@ function renderPatternMastery(pattern, parent) {
   });
   item.appendChild(problemList);
   parent.appendChild(item);
+}
+
+function renderTopicStudyPreview(frame, html) {
+  if (!html.trim()) {
+    frame.srcdoc = '<!doctype html><html><body></body></html>';
+    return;
+  }
+  frame.srcdoc = /<html[\s>]/i.test(html)
+    ? html
+    : `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font:14px system-ui,sans-serif;color:#171717;padding:16px}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`;
+}
+
+function renderTopicStudyArea(topicName, parent) {
+  const material = topicStudyContent[topicName] || { notes: '', html: '' };
+  const section = document.createElement('section');
+  section.className = 'topic-study-area';
+  const head = document.createElement('div');
+  head.className = 'topic-study-area-head';
+  const title = document.createElement('h3');
+  title.textContent = 'Study area';
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'fbtn';
+  edit.textContent = material.notes || material.html ? 'Edit study material' : 'Add study material';
+  edit.addEventListener('click', () => openTopicStudyEditor(topicName));
+  head.append(title, edit);
+  section.appendChild(head);
+
+  const content = document.createElement('div');
+  content.className = 'topic-study-content';
+  if (material.notes?.trim()) {
+    const notes = document.createElement('p');
+    notes.className = 'topic-study-notes';
+    notes.textContent = material.notes;
+    content.appendChild(notes);
+  }
+  if (material.html?.trim()) {
+    const preview = document.createElement('iframe');
+    preview.className = 'topic-study-preview';
+    preview.title = `${topicName} study material preview`;
+    preview.setAttribute('sandbox', 'allow-scripts');
+    preview.setAttribute('referrerpolicy', 'no-referrer');
+    renderTopicStudyPreview(preview, material.html);
+    content.appendChild(preview);
+  }
+  if (!material.notes?.trim() && !material.html?.trim()) {
+    const empty = document.createElement('p');
+    empty.className = 'topic-study-empty';
+    empty.textContent = 'Save notes, images, or HTML for this topic here.';
+    content.appendChild(empty);
+  }
+  section.appendChild(content);
+  parent.appendChild(section);
+}
+
+function openTopicStudyEditor(topicName) {
+  currentStudyTopic = topicName;
+  const material = topicStudyContent[topicName] || { notes: '', html: '' };
+  document.getElementById('topic-study-title').textContent = `${topicName} study area`;
+  document.getElementById('topic-study-notes').value = material.notes || '';
+  document.getElementById('topic-study-html').value = material.html || '';
+  document.getElementById('topic-study-image-file').value = '';
+  renderTopicStudyPreview(document.getElementById('topic-study-preview'), material.html || '');
+  document.getElementById('topic-study-dialog').showModal();
 }
 
 function renderTopicAreas() {
@@ -625,6 +705,7 @@ function renderTopicAreas() {
   container.setAttribute('role', 'tabpanel');
   container.setAttribute('aria-label', `${selected.name} topic patterns`);
   container.append(heading, createTopicProgressBar(counts));
+  renderTopicStudyArea(selected.name, container);
 
   const patternsList = document.createElement('div');
   patternsList.className = 'topic-area-patterns';
@@ -1081,6 +1162,104 @@ document.getElementById('mistake-cause-input').addEventListener('keydown', event
   document.getElementById(id).addEventListener('change', updateReviewPreview);
 });
 
+document.getElementById('topic-study-html').addEventListener('input', event => {
+  renderTopicStudyPreview(document.getElementById('topic-study-preview'), event.target.value);
+});
+async function insertTopicStudyImage(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    toast('Choose an image file.', true);
+    return;
+  }
+  let imageBlob = file;
+  if (file.size > 512 * 1024) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      let scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+      let quality = 0.84;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', quality));
+        if (!blob) break;
+        imageBlob = blob;
+        if (blob.size <= 512 * 1024) break;
+        if (quality > 0.56) quality -= 0.1;
+        else {
+          scale *= 0.8;
+          quality = 0.84;
+        }
+      }
+      bitmap.close();
+    } catch {
+      toast('Could not resize that image. Try a smaller image file.', true);
+      return;
+    }
+  }
+  if (imageBlob.size > 512 * 1024) {
+    toast('Could not compress that image below the storage limit. Try a smaller image.', true);
+    return;
+  }
+  const reader = new FileReader();
+  reader.addEventListener('load', () => {
+    const html = document.getElementById('topic-study-html');
+    const image = `<img src="${reader.result}" alt="Study image" style="max-width:100%;height:auto">`;
+    if (html.value.length + image.length > 1_500_000) {
+      toast('This topic’s HTML is too large to add another image.', true);
+      return;
+    }
+    html.setRangeText(image, html.selectionStart, html.selectionEnd, 'end');
+    html.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  reader.addEventListener('error', () => toast('Could not read that image.', true));
+  reader.readAsDataURL(imageBlob);
+}
+document.getElementById('topic-study-html').addEventListener('paste', event => {
+  const imageItem = [...(event.clipboardData?.items || [])].find(item => item.type.startsWith('image/'));
+  if (!imageItem) return;
+  const image = imageItem.getAsFile();
+  if (!image) return;
+  event.preventDefault();
+  insertTopicStudyImage(image);
+});
+document.getElementById('topic-study-add-image').addEventListener('click', () => {
+  document.getElementById('topic-study-image-file').click();
+});
+document.getElementById('topic-study-image-file').addEventListener('change', event => {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  insertTopicStudyImage(file);
+});
+document.getElementById('topic-study-cancel').addEventListener('click', () => {
+  document.getElementById('topic-study-dialog').close();
+  currentStudyTopic = null;
+});
+document.getElementById('topic-study-dialog').addEventListener('cancel', () => { currentStudyTopic = null; });
+document.getElementById('topic-study-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!currentStudyTopic) return;
+  const notes = document.getElementById('topic-study-notes').value;
+  const html = document.getElementById('topic-study-html').value;
+  topicStudyContent = {
+    ...topicStudyContent,
+    [currentStudyTopic]: { notes, html, updatedAt: Date.now() },
+  };
+  try {
+    localStorage.setItem(TOPIC_STUDY_KEY, JSON.stringify(topicStudyContent));
+  } catch {
+    toast('Could not save the study area. Browser storage may be full.', true);
+    return;
+  }
+  localSyncVersion++;
+  scheduleCloudSync();
+  document.getElementById('topic-study-dialog').close();
+  currentStudyTopic = null;
+  renderTopicAreas();
+  toast('Study material saved.');
+});
+
 
 // ══════════════════════════════════════════════════════════════
 // ANIMATIONS TAB
@@ -1345,6 +1524,7 @@ function currentCloudState() {
     deletedAnimationIds: loadDeletedAnimationIds(),
     dailyStudyLog: loadStudyLog(),
     dailyPracticePlan: loadDailyPracticePlan(),
+    topicStudyContent,
   };
 }
 
@@ -1357,7 +1537,9 @@ function activateLocalSyncAccount(username) {
     localStorage.removeItem(DELETED_ANIMATIONS_KEY);
     localStorage.removeItem(DAILY_STUDY_LOG_KEY);
     localStorage.removeItem(DAILY_PRACTICE_PLAN_KEY);
+    localStorage.removeItem(TOPIC_STUDY_KEY);
     questionProgress = {};
+    topicStudyContent = {};
   }
   localStorage.setItem(SYNC_ACCOUNT_KEY, username);
 }
@@ -1390,7 +1572,11 @@ function mergeCloudStates(remote, local) {
   for (const [day, plan] of Object.entries(local.dailyPracticePlan || {})) {
     if (!dailyPracticePlan[day] || plan.updatedAt > dailyPracticePlan[day].updatedAt) dailyPracticePlan[day] = plan;
   }
-  return { questionProgress, animations: [...animationsById.values()], deletedAnimationIds: [...deletedAnimationIds], dailyStudyLog, dailyPracticePlan };
+  const topicStudyContent = { ...(remote.topicStudyContent || {}) };
+  for (const [topic, content] of Object.entries(local.topicStudyContent || {})) {
+    if (!topicStudyContent[topic] || content.updatedAt > topicStudyContent[topic].updatedAt) topicStudyContent[topic] = content;
+  }
+  return { questionProgress, animations: [...animationsById.values()], deletedAnimationIds: [...deletedAnimationIds], dailyStudyLog, dailyPracticePlan, topicStudyContent };
 }
 
 function stableJson(value) {
@@ -1408,6 +1594,8 @@ function applyCloudState(state) {
   saveDeletedAnimationIds(new Set(state.deletedAnimationIds || []));
   localStorage.setItem(DAILY_STUDY_LOG_KEY, JSON.stringify(state.dailyStudyLog || {}));
   localStorage.setItem(DAILY_PRACTICE_PLAN_KEY, JSON.stringify(state.dailyPracticePlan || {}));
+  topicStudyContent = state.topicStudyContent || {};
+  localStorage.setItem(TOPIC_STUDY_KEY, JSON.stringify(topicStudyContent));
   const badge = document.getElementById('anim-tab-count');
   if (badge) badge.textContent = (state.animations || []).length;
   animationMatchCache = null;
@@ -1440,7 +1628,7 @@ async function readApiResponse(response) {
 
 async function pullAndMergeCloudState() {
   if (!cloudSyncAuthenticated) return;
-  const { state: remote = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {} } } =
+  const { state: remote = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {}, topicStudyContent: {} } } =
     await readApiResponse(await fetch('/api/state', { credentials: 'same-origin', cache: 'no-store' }));
   const local = currentCloudState();
   const merged = mergeCloudStates(remote, local);
@@ -1612,4 +1800,3 @@ void initializeCloudSync();
   const badge = document.getElementById('anim-tab-count');
   if (badge) badge.textContent = loadAnimations().length;
 })();
-

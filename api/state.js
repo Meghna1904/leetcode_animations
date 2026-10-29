@@ -2,7 +2,7 @@ import { getDatabase } from './_lib/database.js';
 import { hasForeignOrigin, sessionUserId, parseJsonBody } from './_lib/session.js';
 
 const MAX_STATE_BYTES = 4 * 1024 * 1024;
-const EMPTY_STATE = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {} };
+const EMPTY_STATE = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {}, topicStudyContent: {} };
 const BUILTIN_MISTAKE_TYPES = ['concept', 'edge-case', 'complexity', 'implementation', 'misread'];
 let schemaReady;
 
@@ -91,8 +91,19 @@ function validDailyPracticePlan(plan) {
   );
 }
 
+function validTopicStudyContent(content) {
+  if (content === undefined) return true;
+  if (!isObject(content) || Object.keys(content).length > 100) return false;
+  return Object.entries(content).every(([topic, material]) =>
+    topic.length > 0 && topic.length <= 100 && isObject(material) &&
+    Number.isFinite(material.updatedAt) && material.updatedAt > 0 &&
+    typeof material.notes === 'string' && material.notes.length <= 100000 &&
+    typeof material.html === 'string' && material.html.length <= 1500000
+  );
+}
+
 function validateState(value) {
-  if (!isObject(value) || !validProgress(value.questionProgress) || !validAnimations(value.animations) || !validDailyStudyLog(value.dailyStudyLog) || !validDailyPracticePlan(value.dailyPracticePlan)) return false;
+  if (!isObject(value) || !validProgress(value.questionProgress) || !validAnimations(value.animations) || !validDailyStudyLog(value.dailyStudyLog) || !validDailyPracticePlan(value.dailyPracticePlan) || !validTopicStudyContent(value.topicStudyContent)) return false;
   const validDeletedIds = value.deletedAnimationIds === undefined ||
     (Array.isArray(value.deletedAnimationIds) && value.deletedAnimationIds.length <= 10000 && value.deletedAnimationIds.every(id => typeof id === 'string'));
   return validDeletedIds;
@@ -127,6 +138,10 @@ function mergeState(current, incoming) {
   for (const [day, entry] of Object.entries(incoming.dailyPracticePlan || {})) {
     if (!dailyPracticePlan[day] || entry.updatedAt >= dailyPracticePlan[day].updatedAt) dailyPracticePlan[day] = entry;
   }
+  const topicStudyContent = { ...(current?.topicStudyContent || {}) };
+  for (const [topic, material] of Object.entries(incoming.topicStudyContent || {})) {
+    if (!topicStudyContent[topic] || material.updatedAt >= topicStudyContent[topic].updatedAt) topicStudyContent[topic] = material;
+  }
 
   return {
     questionProgress,
@@ -134,6 +149,7 @@ function mergeState(current, incoming) {
     deletedAnimationIds: [...deletedAnimationIds],
     dailyStudyLog,
     dailyPracticePlan,
+    topicStudyContent,
   };
 }
 
@@ -180,4 +196,3 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Could not reach the sync database.' });
   }
 }
-
