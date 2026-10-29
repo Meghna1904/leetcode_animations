@@ -59,6 +59,13 @@
     <button class="fbtn"     onclick="patFilterDiff('E',this)">Easy</button>
     <button class="fbtn"     onclick="patFilterDiff('M',this)">Med</button>
     <button class="fbtn"     onclick="patFilterDiff('H',this)">Hard</button>
+    <label class="pat-sort-label" for="pat-sort">Sort patterns</label>
+    <select id="pat-sort" aria-label="Sort patterns">
+      <option value="original">Default order</option>
+      <option value="name">Name A–Z</option>
+      <option value="most-complete">Most complete</option>
+      <option value="least-complete">Least complete</option>
+    </select>
     <button class="fbtn"     onclick="patExpandAll()">Expand All</button>
     <button class="fbtn"     onclick="patCollapseAll()">Collapse</button>
     <span class="pat-info" id="pat-info"></span>
@@ -93,6 +100,29 @@
       <h1>Topics</h1>
       <p>Choose a topic tab, then expand a pattern to see its difficulty targets and remaining problems.</p>
     </header>
+    <div class="topic-toolbar" aria-label="Filter topics and problems">
+      <input id="topic-search" type="search" placeholder="Search topics, patterns, or problems" autocomplete="off" aria-label="Search topics, patterns, or problems">
+      <select id="topic-difficulty-filter" aria-label="Filter by difficulty">
+        <option value="all">All difficulties</option>
+        <option value="E">Easy</option>
+        <option value="M">Medium</option>
+        <option value="H">Hard</option>
+      </select>
+      <select id="topic-status-filter" aria-label="Filter by problem status">
+        <option value="all">All statuses</option>
+        <option value="unsolved">Unsolved</option>
+        <option value="solved">Solved</option>
+        <option value="due">Revision due</option>
+      </select>
+      <select id="topic-pattern-sort" aria-label="Sort patterns">
+        <option value="original">Default order</option>
+        <option value="name">Name A–Z</option>
+        <option value="most-complete">Most complete</option>
+        <option value="least-complete">Least complete</option>
+      </select>
+      <button class="fbtn" id="topic-expand-all" type="button">Expand All</button>
+      <button class="fbtn" id="topic-collapse-all" type="button">Collapse All</button>
+    </div>
     <div id="topic-tabs" class="topic-tabs" role="tablist" aria-label="Topic areas"></div>
     <div id="topic-area-list" class="topic-area-list"></div>
   </main>
@@ -106,6 +136,8 @@
       <p id="today-date-label"></p>
     </header>
     <div id="today-plan" class="today-plan"></div>
+    <details id="review-calendar" class="review-calendar" aria-label="Review due date calendar"></details>
+    <div id="today-upcoming" class="today-upcoming"></div>
   </main>
 </div>
 
@@ -260,6 +292,19 @@
     <div class="progress-dialog-actions">
       <button type="button" class="fbtn" id="topic-study-cancel">Cancel</button>
       <button type="submit" class="fbtn on">Save study area</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="problem-notes-dialog" class="progress-dialog">
+  <form id="problem-notes-form">
+    <div class="review-kicker">PROBLEM NOTES</div>
+    <h2 id="problem-notes-title">Problem notes</h2>
+    <p class="progress-problem-title">These notes are saved with this problem and sync with your account.</p>
+    <textarea id="problem-notes-text" maxlength="20000" rows="8" placeholder="Write an approach, edge case, or reminder…"></textarea>
+    <div class="progress-dialog-actions">
+      <button type="button" class="fbtn" id="problem-notes-cancel">Cancel</button>
+      <button type="submit" class="fbtn on">Save notes</button>
     </div>
   </form>
 </dialog>

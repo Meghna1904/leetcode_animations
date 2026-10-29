@@ -221,6 +221,9 @@ body {
 .search-wrap input:focus { border-color: var(--accent); }
 .search-wrap input::placeholder { color: var(--muted); }
 .si { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 13px; pointer-events: none; }
+.pat-sort-label { color: var(--muted); font: 9px 'Space Mono', monospace; }
+#pat-sort { padding: 6px 8px; border: 1px solid var(--border2); border-radius: var(--r); background: var(--surface); color: var(--text); font: 10px 'Space Mono', monospace; }
+#pat-sort:focus { outline: 1px solid var(--accent); }
 
 .fbtn {
   padding: 5px 12px;
@@ -266,6 +269,12 @@ body {
 .topics-heading { margin-bottom: 16px; }
 .topics-heading h1 { margin-top: 5px; color: var(--text); font-size: 24px; }
 .topics-heading p { margin-top: 5px; color: var(--muted); font: 10px 'Space Mono', monospace; }
+.topic-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 12px; }
+.topic-toolbar input, .topic-toolbar select { min-width: 145px; padding: 7px 9px; border: 1px solid var(--border2); border-radius: var(--r); background: var(--surface); color: var(--text); font: 9px 'Space Mono', monospace; }
+.topic-toolbar input { flex: 1 1 230px; }
+.topic-toolbar select { flex: 0 1 auto; }
+.topic-toolbar input:focus, .topic-toolbar select:focus { outline: 1px solid var(--accent); }
+.topic-toolbar button { font-size: 9px; }
 .topic-tabs { display: flex; gap: 0; overflow-x: auto; border-bottom: 1px solid var(--border2); margin-bottom: 12px; scrollbar-width: thin; }
 .topic-tab { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; padding: 9px 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted2); cursor: pointer; font: 10px 'Space Mono', monospace; white-space: nowrap; }
 .topic-tab > span:last-child { color: var(--muted); font-size: 8px; }
@@ -317,6 +326,12 @@ body {
 .topic-problem-info a:hover { color: var(--accent); text-decoration: underline; }
 .topic-problem-info span:last-child { color: var(--muted); font: 8px 'Space Mono', monospace; }
 .topic-problem-action { flex: 0 0 auto; }
+.topic-problem-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.topic-problem-notes { flex: 0 0 auto; }
+.topic-no-results { padding: 24px 12px; border: 1px dashed var(--border2); color: var(--muted); font: 10px 'Space Mono', monospace; text-align: center; }
+.problem-notes-dialog { width: min(560px, calc(100vw - 28px)); }
+.problem-notes-dialog textarea { width: 100%; min-height: 180px; padding: 10px; border: 1px solid var(--border2); border-radius: var(--r); background: var(--bg); color: var(--text); font: 11px 'Space Mono', monospace; line-height: 1.6; resize: vertical; }
+.problem-notes-dialog textarea:focus { outline: 1px solid var(--accent); }
 .mistake-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; color: var(--muted); font: 8px 'Space Mono', monospace; }
 .mistake-summary:empty { display: none; }
 .mistake-chip { padding: 3px 6px; border: 1px solid var(--border2); color: var(--muted2); }
@@ -518,6 +533,28 @@ body {
 .today-heading { margin-bottom: 18px; }
 .today-heading h1 { margin-top: 5px; color: var(--text); font-size: 24px; }
 .today-heading p { margin-top: 5px; color: var(--muted); font: 10px 'Space Mono', monospace; }
+.review-calendar { display: grid; gap: 12px; margin-bottom: 14px; padding: 14px; border: 1px solid var(--border2); background: var(--surface); }
+.review-calendar > summary { list-style: none; cursor: pointer; }
+.review-calendar > summary::-webkit-details-marker { display: none; }
+.review-calendar-summary { color: var(--muted2); font: 10px 'Space Mono', monospace; }
+.review-calendar-summary::after { content: '+'; float: right; color: var(--accent); font-size: 14px; }
+.review-calendar[open] > .review-calendar-summary::after { content: '−'; }
+.review-calendar-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.review-calendar-head h2 { color: var(--text); font-size: 13px; }
+.review-calendar-nav { display: flex; align-items: center; gap: 10px; }
+.review-calendar-nav strong { min-width: 145px; color: var(--muted2); font: 10px 'Space Mono', monospace; text-align: center; }
+.review-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.review-calendar-weekday { padding: 3px 0; color: var(--muted); font: 8px 'Space Mono', monospace; text-align: center; }
+.review-calendar-spacer { min-height: 40px; }
+.review-calendar-day { display: flex; min-width: 0; min-height: 40px; align-items: center; justify-content: space-between; gap: 2px; padding: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--muted2); cursor: pointer; font: 10px 'Space Mono', monospace; }
+.review-calendar-day:hover, .review-calendar-day.selected { border-color: var(--accent); color: var(--accent); }
+.review-calendar-day.today > span:first-child { text-decoration: underline; text-underline-offset: 3px; }
+.review-calendar-day small { display: grid; min-width: 17px; height: 17px; place-items: center; border-radius: 50%; background: var(--border2); color: var(--muted2); font-size: 8px; }
+.review-calendar-day.has-reviews small { background: var(--accent); color: var(--bg); }
+.review-calendar-selected { display: grid; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.review-calendar-selected h3 { color: var(--muted2); font: 10px 'Space Mono', monospace; }
+.review-calendar-list { display: grid; gap: 5px; }
+.review-calendar-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 8px; border: 1px solid var(--border); background: var(--bg); }
 .today-plan { display: grid; gap: 12px; }
 .today-card { padding: 13px 14px; border: 1px solid var(--border2); background: var(--surface); }
 .today-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 9px; }
@@ -531,6 +568,11 @@ body {
 .today-task-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
 .today-task-actions a { color: var(--accent); font: 9px 'Space Mono', monospace; text-decoration: none; }
 .today-task-actions a:hover { text-decoration: underline; }
+.today-review-primary { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 700; }
+.today-review-primary:hover { border-color: var(--accent); background: var(--accent); color: var(--bg); filter: brightness(.94); }
+.today-log-solve { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.today-log-solve p { color: var(--muted); font: 9px 'Space Mono', monospace; }
+.today-upcoming { display: grid; gap: 12px; margin-top: 12px; }
 .today-defer { color: var(--muted2) !important; }
 .today-next-card > summary { list-style: none; cursor: pointer; }
 .today-next-card > summary::-webkit-details-marker { display: none; }
@@ -911,7 +953,13 @@ textarea.code-box {
   .topics-page { padding: 16px 12px 32px; }
   .today-task { align-items: flex-start; }
   .today-task-actions { flex-direction: column; align-items: flex-end; }
-  .topic-problem-row { align-items: flex-start; }
+  .today-log-solve { align-items: flex-start; flex-direction: column; }
+  .review-calendar { padding: 10px; }
+  .review-calendar-day { min-height: 36px; padding: 3px; }
+  .review-calendar-item { align-items: flex-start; }
+  .topic-problem-row { align-items: flex-start; flex-direction: column; }
+  .topic-problem-actions { width: 100%; justify-content: flex-start; }
+  .topic-toolbar input, .topic-toolbar select { flex: 1 1 100%; min-width: 0; }
 }
 
 /* Give the Topics view a small, consistent readability bump. */

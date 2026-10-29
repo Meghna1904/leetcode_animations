@@ -8,6 +8,7 @@ const SYNC_ACCOUNT_KEY = 'dsa_sync_account_v1';
 const DAILY_STUDY_LOG_KEY = 'dsa_daily_study_log_v1';
 const DAILY_PRACTICE_PLAN_KEY = 'dsa_daily_practice_plan_v1';
 const TOPIC_STUDY_KEY = 'dsa_topic_study_content_v1';
+const QUESTION_NOTES_KEY = 'dsa_question_notes_v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_DEFERRED_PER_DAY = 3;
 const MAX_DEFERRALS_PER_QUESTION = 2;
@@ -23,10 +24,25 @@ let cloudSyncAgain = false;
 let localSyncVersion = 0;
 let topicStudyContent = loadTopicStudyContent();
 let currentStudyTopic = null;
+let questionNotes = loadQuestionNotes();
+let currentQuestionNotesId = null;
+let topicSearchQuery = '';
+let topicDifficultyFilter = 'all';
+let topicStatusFilter = 'all';
+let topicPatternSort = 'original';
+let reviewCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let reviewCalendarSelectedDay = todayKey();
 
 function loadTopicStudyContent() {
   try {
     const saved = JSON.parse(localStorage.getItem(TOPIC_STUDY_KEY) || '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch { return {}; }
+}
+
+function loadQuestionNotes() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(QUESTION_NOTES_KEY) || '{}');
     return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
   } catch { return {}; }
 }
@@ -332,6 +348,28 @@ function buildPatterns() {
   renderProgressSummary();
 }
 
+function applyPatternGridSort() {
+  const grid = document.getElementById('pat-grid');
+  const sort = document.getElementById('pat-sort')?.value || 'original';
+  if (!grid) return;
+  const order = PATTERNS.map((pattern, index) => ({ pattern, index }));
+  if (sort === 'name') order.sort((a, b) => a.pattern.name.localeCompare(b.pattern.name));
+  if (sort === 'most-complete' || sort === 'least-complete') {
+    order.sort((a, b) => {
+      const completion = entry => {
+        const solved = entry.pattern.problems.filter(problem => questionProgress[questionId(problem)]?.completed).length;
+        return solved / entry.pattern.problems.length;
+      };
+      const difference = completion(a) - completion(b);
+      return (sort === 'most-complete' ? -difference : difference) || a.pattern.name.localeCompare(b.pattern.name);
+    });
+  }
+  order.forEach(({ index }) => {
+    const card = document.getElementById(`pc${index}`);
+    if (card) grid.appendChild(card);
+  });
+}
+
 function bindQuestionChecks() {
   document.querySelectorAll('.question-check').forEach(check => {
     check.addEventListener('change', () => {
@@ -537,8 +575,23 @@ function createTopicProgressBar(counts) {
   return wrap;
 }
 
-function renderPatternMastery(pattern, parent) {
+function renderPatternMastery(pattern, parent, filters = {}) {
   const entries = pattern.problems.map(problem => ({ pattern, problem }));
+  const query = (filters.query || '').trim().toLowerCase();
+  const topicMatches = query && filters.topicName?.toLowerCase().includes(query);
+  const patternMatches = query && pattern.name.toLowerCase().includes(query);
+  const visibleProblems = pattern.problems.filter(problem => {
+    const id = questionId(problem);
+    const record = questionProgress[id];
+    if (query && !topicMatches && !patternMatches && !problem.name.toLowerCase().includes(query)) return false;
+    if (filters.difficulty !== 'all' && problem.d !== filters.difficulty) return false;
+    const due = isReviewDue(record);
+    if (filters.status === 'unsolved' && record?.completed) return false;
+    if (filters.status === 'solved' && !record?.completed) return false;
+    if (filters.status === 'due' && !due) return false;
+    return true;
+  });
+  if (!visibleProblems.length) return;
   const counts = progressCounts(entries);
   const item = document.createElement('details');
   item.className = 'topic-pattern';
@@ -553,7 +606,7 @@ function renderPatternMastery(pattern, parent) {
   renderDifficultyTargets(item, entries);
   const problemList = document.createElement('div');
   problemList.className = 'topic-problem-list';
-  pattern.problems.forEach(problem => {
+  visibleProblems.forEach(problem => {
     const id = questionId(problem);
     const record = questionProgress[id];
     const row = document.createElement('div');
@@ -588,7 +641,16 @@ function renderPatternMastery(pattern, parent) {
       action.textContent = 'Solved';
       action.disabled = true;
     }
-    row.append(info, action);
+    const notes = document.createElement('button');
+    notes.type = 'button';
+    notes.className = 'fbtn topic-problem-notes';
+    notes.textContent = questionNotes[id]?.text?.trim() ? 'Edit notes' : 'Add notes';
+    notes.setAttribute('aria-label', `${notes.textContent} for ${problem.name}`);
+    notes.addEventListener('click', () => openProblemNotes(id, problem.name));
+    const actions = document.createElement('div');
+    actions.className = 'topic-problem-actions';
+    actions.append(action, notes);
+    row.append(info, actions);
     problemList.appendChild(row);
   });
   item.appendChild(problemList);
@@ -659,6 +721,13 @@ function openTopicStudyEditor(topicName) {
   document.getElementById('topic-study-dialog').showModal();
 }
 
+function openProblemNotes(questionIdValue, problemName) {
+  currentQuestionNotesId = questionIdValue;
+  document.getElementById('problem-notes-title').textContent = `${problemName} notes`;
+  document.getElementById('problem-notes-text').value = questionNotes[questionIdValue]?.text || '';
+  document.getElementById('problem-notes-dialog').showModal();
+}
+
 function renderTopicAreas() {
   const tabs = document.getElementById('topic-tabs');
   const container = document.getElementById('topic-area-list');
@@ -670,9 +739,21 @@ function renderTopicAreas() {
     name: area.name,
     patterns: PATTERNS.filter(pattern => area.patterns.includes(pattern.name)),
   })).filter(area => area.patterns.length)];
-  if (!areas.some(area => area.name === activeTopicArea)) activeTopicArea = 'All Topics';
+  const search = (document.getElementById('topic-search')?.value || '').trim().toLowerCase();
+  topicSearchQuery = search;
+  const areaMatchesSearch = area => !search || area.name.toLowerCase().includes(search) || area.patterns.some(pattern =>
+    pattern.name.toLowerCase().includes(search) || pattern.problems.some(problem => problem.name.toLowerCase().includes(search))
+  );
+  const visibleAreas = areas.filter(areaMatchesSearch);
+  if (!visibleAreas.length) {
+    container.textContent = 'No topics, patterns, or problems match your search.';
+    container.classList.add('topic-no-results');
+    return;
+  }
+  container.classList.remove('topic-no-results');
+  if (!visibleAreas.some(area => area.name === activeTopicArea)) activeTopicArea = visibleAreas[0].name;
 
-  areas.forEach(area => {
+  visibleAreas.forEach(area => {
     const counts = progressCounts(uniquePatternEntries(area.patterns));
     const tab = document.createElement('button');
     tab.type = 'button';
@@ -692,7 +773,7 @@ function renderTopicAreas() {
     tabs.appendChild(tab);
   });
 
-  const selected = areas.find(area => area.name === activeTopicArea) || areas[0];
+  const selected = visibleAreas.find(area => area.name === activeTopicArea) || visibleAreas[0];
   const entries = uniquePatternEntries(selected.patterns);
   const counts = progressCounts(entries);
   const heading = document.createElement('div');
@@ -709,9 +790,53 @@ function renderTopicAreas() {
 
   const patternsList = document.createElement('div');
   patternsList.className = 'topic-area-patterns';
-  selected.patterns.forEach(pattern => renderPatternMastery(pattern, patternsList));
+  const patterns = [...selected.patterns];
+  const patternCounts = pattern => progressCounts(pattern.problems.map(problem => ({ pattern, problem })));
+  if (topicPatternSort === 'name') patterns.sort((a, b) => a.name.localeCompare(b.name));
+  if (topicPatternSort === 'most-complete') patterns.sort((a, b) => {
+    const left = patternCounts(a);
+    const right = patternCounts(b);
+    return (right.solved / right.total) - (left.solved / left.total) || a.name.localeCompare(b.name);
+  });
+  if (topicPatternSort === 'least-complete') patterns.sort((a, b) => {
+    const left = patternCounts(a);
+    const right = patternCounts(b);
+    return (left.solved / left.total) - (right.solved / right.total) || a.name.localeCompare(b.name);
+  });
+  patterns.forEach(pattern => renderPatternMastery(pattern, patternsList, {
+    query: topicSearchQuery,
+    topicName: selected.name,
+    difficulty: topicDifficultyFilter,
+    status: topicStatusFilter,
+  }));
+  if (!patternsList.childElementCount) {
+    const empty = document.createElement('p');
+    empty.className = 'topic-no-results';
+    empty.textContent = 'No problems match these filters.';
+    patternsList.appendChild(empty);
+  }
   container.appendChild(patternsList);
 }
+
+document.getElementById('topic-search').addEventListener('input', renderTopicAreas);
+document.getElementById('topic-difficulty-filter').addEventListener('change', event => {
+  topicDifficultyFilter = event.target.value;
+  renderTopicAreas();
+});
+document.getElementById('topic-status-filter').addEventListener('change', event => {
+  topicStatusFilter = event.target.value;
+  renderTopicAreas();
+});
+document.getElementById('topic-pattern-sort').addEventListener('change', event => {
+  topicPatternSort = event.target.value;
+  renderTopicAreas();
+});
+document.getElementById('topic-expand-all').addEventListener('click', () => {
+  document.querySelectorAll('#topic-area-list .topic-pattern').forEach(pattern => { pattern.open = true; });
+});
+document.getElementById('topic-collapse-all').addEventListener('click', () => {
+  document.querySelectorAll('#topic-area-list .topic-pattern').forEach(pattern => { pattern.open = false; });
+});
 
 function renderProgressInsights() {
   const entries = allQuestionEntries();
@@ -956,11 +1081,158 @@ function createTodayCard(title, count, content) {
   return card;
 }
 
+function reviewCalendarKey(timestamp) {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function shiftReviewCalendarMonth(offset) {
+  const day = Number(reviewCalendarSelectedDay.slice(-2));
+  const targetMonth = new Date(reviewCalendarMonth.getFullYear(), reviewCalendarMonth.getMonth() + offset, 1);
+  const targetDay = Math.min(day, new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate());
+  reviewCalendarMonth = targetMonth;
+  reviewCalendarSelectedDay = `${targetMonth.getFullYear()}-${String(targetMonth.getMonth() + 1).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+}
+
+function renderReviewCalendar() {
+  const container = document.getElementById('review-calendar');
+  if (!container) return;
+  container.replaceChildren();
+
+  const scheduled = Object.values(questionProgress).filter(record => record.completed && record.dueAt > 0)
+    .map(record => ({ record, when: Math.max(record.dueAt, record.postponedUntil || 0), found: findQuestion(record.id) }))
+    .filter(item => item.found);
+  const byDay = new Map();
+  scheduled.forEach(item => {
+    const key = reviewCalendarKey(item.when);
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(item);
+  });
+
+  const summary = document.createElement('summary');
+  summary.className = 'review-calendar-summary';
+  const monthPrefix = `${reviewCalendarMonth.getFullYear()}-${String(reviewCalendarMonth.getMonth() + 1).padStart(2, '0')}-`;
+  const monthCount = scheduled.filter(item => reviewCalendarKey(item.when).startsWith(monthPrefix)).length;
+  summary.textContent = `Review calendar · ${monthCount} scheduled this month`;
+  container.appendChild(summary);
+
+  const head = document.createElement('div');
+  head.className = 'review-calendar-head';
+  const heading = document.createElement('h2');
+  heading.textContent = 'Browse dates';
+  const nav = document.createElement('div');
+  nav.className = 'review-calendar-nav';
+  const previous = document.createElement('button');
+  previous.type = 'button';
+  previous.className = 'fbtn';
+  previous.textContent = '‹';
+  previous.setAttribute('aria-label', 'Previous month');
+  previous.addEventListener('click', () => {
+    shiftReviewCalendarMonth(-1);
+    renderReviewCalendar();
+  });
+  const month = document.createElement('strong');
+  month.textContent = reviewCalendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.className = 'fbtn';
+  next.textContent = '›';
+  next.setAttribute('aria-label', 'Next month');
+  next.addEventListener('click', () => {
+    shiftReviewCalendarMonth(1);
+    renderReviewCalendar();
+  });
+  nav.append(previous, month, next);
+  head.append(heading, nav);
+  container.appendChild(head);
+
+  const grid = document.createElement('div');
+  grid.className = 'review-calendar-grid';
+  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(day => {
+    const label = document.createElement('span');
+    label.className = 'review-calendar-weekday';
+    label.textContent = day;
+    grid.appendChild(label);
+  });
+  const year = reviewCalendarMonth.getFullYear();
+  const monthIndex = reviewCalendarMonth.getMonth();
+  const firstWeekday = new Date(year, monthIndex, 1).getDay();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  for (let blank = 0; blank < firstWeekday; blank++) {
+    const spacer = document.createElement('span');
+    spacer.className = 'review-calendar-spacer';
+    grid.appendChild(spacer);
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    const key = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const items = byDay.get(key) || [];
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `review-calendar-day${key === reviewCalendarSelectedDay ? ' selected' : ''}${key === todayKey() ? ' today' : ''}${items.length ? ' has-reviews' : ''}`;
+    button.setAttribute('aria-label', `${key}, ${items.length} review${items.length === 1 ? '' : 's'}`);
+    button.setAttribute('aria-pressed', String(key === reviewCalendarSelectedDay));
+    const number = document.createElement('span');
+    number.textContent = String(day);
+    button.appendChild(number);
+    if (items.length) {
+      const count = document.createElement('small');
+      count.textContent = String(items.length);
+      button.appendChild(count);
+    }
+    button.addEventListener('click', () => {
+      reviewCalendarSelectedDay = key;
+      renderReviewCalendar();
+    });
+    grid.appendChild(button);
+  }
+  container.appendChild(grid);
+
+  const selectedItems = byDay.get(reviewCalendarSelectedDay) || [];
+  const selected = document.createElement('div');
+  selected.className = 'review-calendar-selected';
+  const selectedHeading = document.createElement('h3');
+  const [selectedYear, selectedMonth, selectedDay] = reviewCalendarSelectedDay.split('-').map(Number);
+  selectedHeading.textContent = new Date(selectedYear, selectedMonth - 1, selectedDay).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  selected.appendChild(selectedHeading);
+  if (!selectedItems.length) {
+    const empty = document.createElement('p');
+    empty.className = 'today-empty';
+    empty.textContent = 'No reviews scheduled for this day.';
+    selected.appendChild(empty);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'review-calendar-list';
+    selectedItems.forEach(({ record, when, found }) => {
+      const row = document.createElement('div');
+      row.className = 'review-calendar-item';
+      const info = document.createElement('div');
+      info.className = 'today-task-info';
+      const title = document.createElement('strong');
+      title.textContent = found.problem.name;
+      const detail = document.createElement('span');
+      detail.textContent = `${found.pattern.name} · ${when < localDayStart() ? 'Overdue' : 'Review due'}`;
+      info.append(title, detail);
+      const review = document.createElement('button');
+      review.type = 'button';
+      review.className = `fbtn${isReviewDue(record) ? ' today-review-primary' : ''}`;
+      review.textContent = 'Review';
+      review.addEventListener('click', () => openProgressDialog(record.id, 'review'));
+      row.append(info, review);
+      list.appendChild(row);
+    });
+    selected.appendChild(list);
+  }
+  container.appendChild(selected);
+}
+
 function renderToday() {
   const container = document.getElementById('today-plan');
   if (!container) return;
   container.replaceChildren();
+  const upcomingContainer = document.getElementById('today-upcoming');
+  upcomingContainer?.replaceChildren();
   document.getElementById('today-date-label').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  renderReviewCalendar();
 
   const todayStart = localDayStart();
   const solvedToday = Object.values(questionProgress).map(record => {
@@ -968,28 +1240,6 @@ function renderToday() {
     const found = attempts.length ? findQuestion(record.id) : null;
     return found ? { record, found, attempts } : null;
   }).filter(Boolean).sort((a, b) => b.attempts.at(-1).at - a.attempts.at(-1).at);
-
-  const solvedList = document.createElement('div');
-  solvedList.className = 'today-task-list';
-  if (!solvedToday.length) {
-    const empty = document.createElement('p');
-    empty.className = 'today-empty';
-    empty.textContent = 'Tick a problem in Patterns and save the solve details to have it appear here.';
-    solvedList.appendChild(empty);
-  } else {
-    solvedToday.forEach(({ record, found, attempts }) => {
-      const latest = attempts.at(-1);
-      const task = createTodayTask(found.problem.name, `${found.pattern.name} · ${attempts.length} solved today · latest ${outcomeLabel(latest)}`);
-      const link = document.createElement('a');
-      link.href = found.problem.url;
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = 'Open problem';
-      task.actions.appendChild(link);
-      solvedList.appendChild(task.row);
-    });
-  }
-  container.appendChild(createTodayCard('Solved today', `${solvedToday.length} problem${solvedToday.length === 1 ? '' : 's'}`, solvedList));
 
   const due = Object.values(questionProgress).filter(record => isReviewDue(record)).sort((a, b) => a.dueAt - b.dueAt);
   const revisionList = document.createElement('div');
@@ -1006,7 +1256,7 @@ function renderToday() {
       const task = createTodayTask(found.problem.name, `${found.pattern.name} · ${dueReason(record)}`);
       const review = document.createElement('button');
       review.type = 'button';
-      review.className = 'fbtn';
+      review.className = 'fbtn today-review-primary';
       review.textContent = 'Review';
       review.addEventListener('click', () => openProgressDialog(record.id, 'review'));
       const move = document.createElement('button');
@@ -1022,6 +1272,43 @@ function renderToday() {
     });
   }
   container.appendChild(createTodayCard('Revision due', String(due.length), revisionList));
+
+  const logSolveContent = document.createElement('div');
+  logSolveContent.className = 'today-log-solve';
+  const logSolveHelp = document.createElement('p');
+  logSolveHelp.textContent = 'Choose a problem you worked on and log your result.';
+  const logSolveButton = document.createElement('button');
+  logSolveButton.type = 'button';
+  logSolveButton.className = 'fbtn';
+  logSolveButton.textContent = 'Choose a problem in Patterns';
+  logSolveButton.addEventListener('click', () => {
+    switchTab('patterns');
+    document.getElementById('pat-search')?.focus();
+  });
+  logSolveContent.append(logSolveHelp, logSolveButton);
+  container.appendChild(createTodayCard('Log a solve', 'Choose any problem', logSolveContent));
+
+  const solvedList = document.createElement('div');
+  solvedList.className = 'today-task-list';
+  if (!solvedToday.length) {
+    const empty = document.createElement('p');
+    empty.className = 'today-empty';
+    empty.textContent = 'Problems you solve today will appear here.';
+    solvedList.appendChild(empty);
+  } else {
+    solvedToday.forEach(({ found, attempts }) => {
+      const latest = attempts.at(-1);
+      const task = createTodayTask(found.problem.name, `${found.pattern.name} · ${attempts.length} solved today · latest ${outcomeLabel(latest)}`);
+      const link = document.createElement('a');
+      link.href = found.problem.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Open problem';
+      task.actions.appendChild(link);
+      solvedList.appendChild(task.row);
+    });
+  }
+  container.appendChild(createTodayCard('Solved today', `${solvedToday.length} problem${solvedToday.length === 1 ? '' : 's'}`, solvedList));
 
   const upcomingReviews = Object.values(questionProgress).filter(record => record.completed)
     .map(record => ({ record, when: Math.max(record.dueAt || 0, record.postponedUntil || 0), found: findQuestion(record.id) }))
@@ -1061,7 +1348,7 @@ function renderToday() {
     nextList.appendChild(empty);
   }
   nextCard.append(nextHead, nextList);
-  container.appendChild(nextCard);
+  upcomingContainer?.appendChild(nextCard);
 
   const badge = document.getElementById('today-tab-count');
   if (badge) badge.textContent = String(due.length);
@@ -1078,6 +1365,7 @@ function refreshQuestionProgress() {
   });
   updatePatInfo();
   renderProgressSummary();
+  applyPatternGridSort();
 }
 
 document.getElementById('progress-form').addEventListener('submit', event => {
@@ -1258,6 +1546,33 @@ document.getElementById('topic-study-form').addEventListener('submit', event => 
   currentStudyTopic = null;
   renderTopicAreas();
   toast('Study material saved.');
+});
+document.getElementById('problem-notes-cancel').addEventListener('click', () => {
+  document.getElementById('problem-notes-dialog').close();
+  currentQuestionNotesId = null;
+});
+document.getElementById('problem-notes-dialog').addEventListener('cancel', () => { currentQuestionNotesId = null; });
+document.getElementById('problem-notes-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!currentQuestionNotesId) return;
+  const text = document.getElementById('problem-notes-text').value;
+  const nextNotes = {
+    ...questionNotes,
+    [currentQuestionNotesId]: { text, updatedAt: Date.now() },
+  };
+  try {
+    localStorage.setItem(QUESTION_NOTES_KEY, JSON.stringify(nextNotes));
+  } catch {
+    toast('Could not save problem notes. Browser storage may be full.', true);
+    return;
+  }
+  questionNotes = nextNotes;
+  localSyncVersion++;
+  scheduleCloudSync();
+  document.getElementById('problem-notes-dialog').close();
+  currentQuestionNotesId = null;
+  renderTopicAreas();
+  toast('Problem notes saved.');
 });
 
 
@@ -1525,6 +1840,7 @@ function currentCloudState() {
     dailyStudyLog: loadStudyLog(),
     dailyPracticePlan: loadDailyPracticePlan(),
     topicStudyContent,
+    questionNotes,
   };
 }
 
@@ -1538,8 +1854,10 @@ function activateLocalSyncAccount(username) {
     localStorage.removeItem(DAILY_STUDY_LOG_KEY);
     localStorage.removeItem(DAILY_PRACTICE_PLAN_KEY);
     localStorage.removeItem(TOPIC_STUDY_KEY);
+    localStorage.removeItem(QUESTION_NOTES_KEY);
     questionProgress = {};
     topicStudyContent = {};
+    questionNotes = {};
   }
   localStorage.setItem(SYNC_ACCOUNT_KEY, username);
 }
@@ -1576,7 +1894,11 @@ function mergeCloudStates(remote, local) {
   for (const [topic, content] of Object.entries(local.topicStudyContent || {})) {
     if (!topicStudyContent[topic] || content.updatedAt > topicStudyContent[topic].updatedAt) topicStudyContent[topic] = content;
   }
-  return { questionProgress, animations: [...animationsById.values()], deletedAnimationIds: [...deletedAnimationIds], dailyStudyLog, dailyPracticePlan, topicStudyContent };
+  const questionNotes = { ...(remote.questionNotes || {}) };
+  for (const [id, note] of Object.entries(local.questionNotes || {})) {
+    if (!questionNotes[id] || note.updatedAt >= questionNotes[id].updatedAt) questionNotes[id] = note;
+  }
+  return { questionProgress, animations: [...animationsById.values()], deletedAnimationIds: [...deletedAnimationIds], dailyStudyLog, dailyPracticePlan, topicStudyContent, questionNotes };
 }
 
 function stableJson(value) {
@@ -1596,6 +1918,8 @@ function applyCloudState(state) {
   localStorage.setItem(DAILY_PRACTICE_PLAN_KEY, JSON.stringify(state.dailyPracticePlan || {}));
   topicStudyContent = state.topicStudyContent || {};
   localStorage.setItem(TOPIC_STUDY_KEY, JSON.stringify(topicStudyContent));
+  questionNotes = state.questionNotes || {};
+  localStorage.setItem(QUESTION_NOTES_KEY, JSON.stringify(questionNotes));
   const badge = document.getElementById('anim-tab-count');
   if (badge) badge.textContent = (state.animations || []).length;
   animationMatchCache = null;
@@ -1628,7 +1952,7 @@ async function readApiResponse(response) {
 
 async function pullAndMergeCloudState() {
   if (!cloudSyncAuthenticated) return;
-  const { state: remote = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {}, topicStudyContent: {} } } =
+  const { state: remote = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {}, topicStudyContent: {}, questionNotes: {} } } =
     await readApiResponse(await fetch('/api/state', { credentials: 'same-origin', cache: 'no-store' }));
   const local = currentCloudState();
   const merged = mergeCloudStates(remote, local);
@@ -1791,6 +2115,7 @@ fillQuestionOptions();
 buildMistakeOptions();
 updateQuestionMatchNote(null);
 buildPatterns();
+document.getElementById('pat-sort').addEventListener('change', applyPatternGridSort);
 renderAnimCollection();
 switchTab('today');
 void initializeCloudSync();

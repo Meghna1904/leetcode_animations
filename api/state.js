@@ -2,7 +2,7 @@ import { getDatabase } from './_lib/database.js';
 import { hasForeignOrigin, sessionUserId, parseJsonBody } from './_lib/session.js';
 
 const MAX_STATE_BYTES = 4 * 1024 * 1024;
-const EMPTY_STATE = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {}, topicStudyContent: {} };
+const EMPTY_STATE = { questionProgress: {}, animations: [], deletedAnimationIds: [], dailyStudyLog: {}, dailyPracticePlan: {}, topicStudyContent: {}, questionNotes: {} };
 const BUILTIN_MISTAKE_TYPES = ['concept', 'edge-case', 'complexity', 'implementation', 'misread'];
 let schemaReady;
 
@@ -102,8 +102,18 @@ function validTopicStudyContent(content) {
   );
 }
 
+function validQuestionNotes(notes) {
+  if (notes === undefined) return true;
+  if (!isObject(notes) || Object.keys(notes).length > 10000) return false;
+  return Object.entries(notes).every(([id, note]) =>
+    id.length > 0 && id.length <= 500 && isObject(note) &&
+    typeof note.text === 'string' && note.text.length <= 20000 &&
+    Number.isFinite(note.updatedAt) && note.updatedAt > 0
+  );
+}
+
 function validateState(value) {
-  if (!isObject(value) || !validProgress(value.questionProgress) || !validAnimations(value.animations) || !validDailyStudyLog(value.dailyStudyLog) || !validDailyPracticePlan(value.dailyPracticePlan) || !validTopicStudyContent(value.topicStudyContent)) return false;
+  if (!isObject(value) || !validProgress(value.questionProgress) || !validAnimations(value.animations) || !validDailyStudyLog(value.dailyStudyLog) || !validDailyPracticePlan(value.dailyPracticePlan) || !validTopicStudyContent(value.topicStudyContent) || !validQuestionNotes(value.questionNotes)) return false;
   const validDeletedIds = value.deletedAnimationIds === undefined ||
     (Array.isArray(value.deletedAnimationIds) && value.deletedAnimationIds.length <= 10000 && value.deletedAnimationIds.every(id => typeof id === 'string'));
   return validDeletedIds;
@@ -142,6 +152,10 @@ function mergeState(current, incoming) {
   for (const [topic, material] of Object.entries(incoming.topicStudyContent || {})) {
     if (!topicStudyContent[topic] || material.updatedAt >= topicStudyContent[topic].updatedAt) topicStudyContent[topic] = material;
   }
+  const questionNotes = { ...(current?.questionNotes || {}) };
+  for (const [id, note] of Object.entries(incoming.questionNotes || {})) {
+    if (!questionNotes[id] || note.updatedAt >= questionNotes[id].updatedAt) questionNotes[id] = note;
+  }
 
   return {
     questionProgress,
@@ -150,6 +164,7 @@ function mergeState(current, incoming) {
     dailyStudyLog,
     dailyPracticePlan,
     topicStudyContent,
+    questionNotes,
   };
 }
 
