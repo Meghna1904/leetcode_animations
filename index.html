@@ -37,10 +37,8 @@
   </nav>
 
   <div class="header-right">
+    <button class="btn btn-ghost btn-sm" id="btn-global-search" type="button" title="Search problems (/)" aria-label="Search problems">⌕</button>
     <button class="btn btn-ghost btn-sm" id="btn-sync-status" type="button" aria-label="Cloud sync" title="Cloud sync">Sync</button>
-    <button class="btn btn-accent btn-sm" id="btn-add-anim">
-      + Add Animation
-    </button>
   </div>
 </header>
 
@@ -154,7 +152,7 @@
     <div id="anim-grid"></div>
     <div class="anim-empty" id="anim-empty">
       <div>📭</div>
-      <p>No animations yet. Click <strong>+ Add Animation</strong> to get started.</p>
+      <p>No animations yet. Use <strong>+ animation</strong> on a problem row to add one.</p>
     </div>
   </div>
 
@@ -270,6 +268,20 @@
     <div class="progress-dialog-actions">
       <button type="button" class="fbtn" id="progress-cancel">Cancel</button>
       <button type="submit" class="fbtn on">Save progress</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="problem-search-dialog" class="progress-dialog problem-search-dialog">
+  <form id="problem-search-form">
+    <div class="review-kicker" id="problem-search-kicker">FIND A PROBLEM</div>
+    <h2 id="problem-search-title">Search problems</h2>
+    <label for="problem-search-input">Problem or pattern name</label>
+    <input id="problem-search-input" type="search" autocomplete="off" placeholder="Start typing a problem name…">
+    <p class="problem-search-hint">Shortcut: / or Ctrl/⌘ K</p>
+    <div id="problem-search-results" class="problem-search-results" role="listbox" aria-label="Problem search results"></div>
+    <div class="progress-dialog-actions">
+      <button type="button" class="fbtn" id="problem-search-cancel">Close</button>
     </div>
   </form>
 </dialog>

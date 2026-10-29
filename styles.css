@@ -443,7 +443,7 @@ body {
 
 .pat-prow {
   display: grid;
-  grid-template-columns: 18px 18px minmax(0, 1fr) 52px 24px;
+  grid-template-columns: 18px 18px minmax(0, 1fr) 52px 50px;
   gap: 8px;
   align-items: center;
   padding: 6px 15px;
@@ -486,6 +486,9 @@ body {
   cursor: pointer;
 }
 .question-animation:hover { background: var(--accent-dim); }
+.question-animation-actions { display: flex; align-items: center; justify-content: flex-end; gap: 3px; }
+.question-animation-add { border-color: var(--border2); color: var(--muted2); font-size: 14px; line-height: 1; }
+.question-animation-add:hover { border-color: var(--accent); color: var(--accent); }
 
 .diff-badge {
   font-family: 'Space Mono', monospace;
@@ -589,6 +592,16 @@ body {
 .hint-check input { accent-color: var(--accent); }
 .progress-dialog .field-help { margin: 0; color: var(--accent); font: 9px 'Space Mono', monospace; }
 .progress-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.problem-search-dialog { width: min(560px, calc(100vw - 28px)); }
+.problem-search-dialog input[type="search"] { width: 100%; padding: 9px 10px; border: 1px solid var(--border2); border-radius: var(--r); background: var(--bg); color: var(--text); font: 11px 'Space Mono', monospace; }
+.problem-search-dialog input[type="search"]:focus { outline: 1px solid var(--accent); }
+.problem-search-hint { margin: -6px 0 0; color: var(--muted); font: 8px 'Space Mono', monospace; }
+.problem-search-results { display: grid; max-height: min(45vh, 360px); overflow-y: auto; gap: 4px; }
+.problem-search-result { display: grid; gap: 3px; padding: 8px 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; text-align: left; }
+.problem-search-result:hover, .problem-search-result:focus-visible { border-color: var(--accent); outline: none; }
+.problem-search-result strong { font-size: 10px; }
+.problem-search-result span { color: var(--muted); font: 8px 'Space Mono', monospace; }
+.problem-search-empty { padding: 16px 8px; color: var(--muted); font: 9px 'Space Mono', monospace; text-align: center; }
 
 /* Empty */
 .pat-empty {
@@ -960,6 +973,7 @@ textarea.code-box {
   .topic-problem-row { align-items: flex-start; flex-direction: column; }
   .topic-problem-actions { width: 100%; justify-content: flex-start; }
   .topic-toolbar input, .topic-toolbar select { flex: 1 1 100%; min-width: 0; }
+  .pat-prow { grid-template-columns: 16px 16px minmax(0, 1fr) 42px 48px; gap: 5px; padding: 6px 8px; }
 }
 
 /* Give the Topics view a small, consistent readability bump. */

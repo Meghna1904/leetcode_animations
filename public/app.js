@@ -32,6 +32,7 @@ let topicStatusFilter = 'all';
 let topicPatternSort = 'original';
 let reviewCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let reviewCalendarSelectedDay = todayKey();
+let problemSearchMode = 'navigate';
 
 function loadTopicStudyContent() {
   try {
@@ -288,21 +289,37 @@ function autoSelectRelatedQuestion() {
 
 function refreshQuestionAnimationButtons() {
   document.querySelectorAll('.pat-prow').forEach(row => {
-    row.querySelector('.question-animation')?.remove();
+    row.querySelector('.question-animation-actions')?.remove();
     const ref = row.dataset.questionRef;
     const animation = findAnimationForQuestion(ref);
-    if (!animation) return;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'question-animation';
-    button.textContent = '▶';
-    button.title = `Open animation: ${animation.title}`;
-    button.setAttribute('aria-label', `Open animation for ${row.querySelector('.pat-pname').textContent}`);
-    button.addEventListener('click', event => {
+    const problemName = row.querySelector('.pat-pname').textContent;
+    const actions = document.createElement('div');
+    actions.className = 'question-animation-actions';
+    if (animation) {
+      const play = document.createElement('button');
+      play.type = 'button';
+      play.className = 'question-animation';
+      play.textContent = '▶';
+      play.title = `Open animation: ${animation.title}`;
+      play.setAttribute('aria-label', `Open animation for ${problemName}`);
+      play.addEventListener('click', event => {
+        event.stopPropagation();
+        openPlayer(animation.id);
+      });
+      actions.appendChild(play);
+    }
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'question-animation question-animation-add';
+    add.textContent = '+';
+    add.title = `Add animation for ${problemName}`;
+    add.setAttribute('aria-label', `Add animation for ${problemName}`);
+    add.addEventListener('click', event => {
       event.stopPropagation();
-      openPlayer(animation.id);
+      startAnimationForQuestion(ref);
     });
-    row.appendChild(button);
+    actions.appendChild(add);
+    row.appendChild(actions);
   });
 }
 
@@ -453,7 +470,7 @@ function openProgressDialog(id, mode) {
 
   const record = questionProgress[id];
   const dialog = document.getElementById('progress-dialog');
-  document.getElementById('progress-dialog-title').textContent = mode === 'review' ? 'Log review' : 'Mark as solved';
+  document.getElementById('progress-dialog-title').textContent = mode === 'review' ? 'Log review' : 'Log a solve';
   document.getElementById('progress-problem-title').textContent = `${found.problem.name} · ${found.pattern.name}`;
   document.getElementById('solve-minutes').value = record?.lastMinutes || String(expectedMinutes(found.problem.d));
   document.getElementById('solve-toughness').value = record?.toughness || '3';
@@ -1276,15 +1293,12 @@ function renderToday() {
   const logSolveContent = document.createElement('div');
   logSolveContent.className = 'today-log-solve';
   const logSolveHelp = document.createElement('p');
-  logSolveHelp.textContent = 'Choose a problem you worked on and log your result.';
+  logSolveHelp.textContent = 'Find the problem you just worked on, then enter your time and whether you used a hint.';
   const logSolveButton = document.createElement('button');
   logSolveButton.type = 'button';
-  logSolveButton.className = 'fbtn';
-  logSolveButton.textContent = 'Choose a problem in Patterns';
-  logSolveButton.addEventListener('click', () => {
-    switchTab('patterns');
-    document.getElementById('pat-search')?.focus();
-  });
+  logSolveButton.className = 'fbtn today-review-primary';
+  logSolveButton.textContent = 'Log solve';
+  logSolveButton.addEventListener('click', () => openProblemSearch('solve'));
   logSolveContent.append(logSolveHelp, logSolveButton);
   container.appendChild(createTodayCard('Log a solve', 'Choose any problem', logSolveContent));
 
@@ -1807,13 +1821,98 @@ function switchTab(name) {
   if (name === 'today') renderToday();
 }
 
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
-});
+function renderProblemSearchResults() {
+  const results = document.getElementById('problem-search-results');
+  const query = document.getElementById('problem-search-input').value.trim().toLowerCase();
+  results.replaceChildren();
+  if (!query) {
+    const prompt = document.createElement('p');
+    prompt.className = 'problem-search-empty';
+    prompt.textContent = 'Type a problem or pattern name to search.';
+    results.appendChild(prompt);
+    return;
+  }
+  const matches = allQuestionEntries().filter(({ pattern, problem }) =>
+    problem.name.toLowerCase().includes(query) || pattern.name.toLowerCase().includes(query)
+  ).slice(0, 60);
+  if (!matches.length) {
+    const empty = document.createElement('p');
+    empty.className = 'problem-search-empty';
+    empty.textContent = 'No matching problems.';
+    results.appendChild(empty);
+    return;
+  }
+  matches.forEach(({ ref, pattern, problem }) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'problem-search-result';
+    button.setAttribute('role', 'option');
+    const title = document.createElement('strong');
+    title.textContent = problem.name;
+    const detail = document.createElement('span');
+    detail.textContent = `${pattern.name} · ${problem.d === 'E' ? 'Easy' : problem.d === 'M' ? 'Medium' : 'Hard'}`;
+    button.append(title, detail);
+    button.addEventListener('click', () => {
+      document.getElementById('problem-search-dialog').close();
+      if (problemSearchMode === 'solve') {
+        openProgressDialog(questionId(problem), 'solve');
+        return;
+      }
+      switchTab('patterns');
+      const search = document.getElementById('pat-search');
+      search.value = problem.name;
+      patActiveDiff = 'all';
+      const diffButtons = document.querySelectorAll('#pat-controls > .fbtn');
+      diffButtons.forEach(button => button.classList.remove('on'));
+      diffButtons[0]?.classList.add('on');
+      patFilter();
+      const row = [...document.querySelectorAll('.pat-prow')].find(item => item.dataset.questionRef === ref);
+      if (row) {
+        row.closest('.pat-card')?.classList.add('open');
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+    results.appendChild(button);
+  });
+}
 
-document.getElementById('btn-add-anim').addEventListener('click', () => {
+function openProblemSearch(mode = 'navigate') {
+  problemSearchMode = mode;
+  document.getElementById('problem-search-kicker').textContent = mode === 'solve' ? 'LOG PROGRESS' : 'QUICK SEARCH';
+  document.getElementById('problem-search-title').textContent = mode === 'solve' ? 'Log a solve' : 'Search problems';
+  document.getElementById('problem-search-input').value = '';
+  renderProblemSearchResults();
+  document.getElementById('problem-search-dialog').showModal();
+  document.getElementById('problem-search-input').focus();
+}
+
+function startAnimationForQuestion(ref) {
+  const match = getQuestionFromRef(ref);
+  if (!match) return;
   switchTab('animations');
   showAnimView('add');
+  questionSelect.value = ref;
+  questionMatchWasChosen = true;
+  updateQuestionMatchNote(match);
+  document.getElementById('anim-title').focus();
+}
+
+document.getElementById('problem-search-input').addEventListener('input', renderProblemSearchResults);
+document.getElementById('problem-search-form').addEventListener('submit', event => event.preventDefault());
+document.getElementById('problem-search-cancel').addEventListener('click', () => document.getElementById('problem-search-dialog').close());
+document.getElementById('btn-global-search').addEventListener('click', () => openProblemSearch('navigate'));
+document.addEventListener('keydown', event => {
+  if (document.querySelector('dialog[open]')) return;
+  const typing = event.target instanceof HTMLElement && event.target.matches('input, textarea, select, [contenteditable="true"]');
+  if ((event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) ||
+      ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
+    event.preventDefault();
+    openProblemSearch('navigate');
+  }
+});
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
 
