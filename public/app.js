@@ -2056,11 +2056,42 @@ function switchTab(name) {
   if (name === 'today') renderToday();
 }
 
+function selectProblemSearchResult(ref) {
+  const entry = getQuestionFromRef(ref);
+  if (!entry) return;
+  const { problem } = entry;
+  document.getElementById('problem-search-input').setAttribute('aria-expanded', 'false');
+  document.getElementById('problem-search-dialog').close();
+  if (problemSearchMode === 'plan') {
+    addPlannedProblem(questionId(problem));
+    switchTab('today');
+    return;
+  }
+  if (problemSearchMode === 'solve') {
+    openProgressDialog(questionId(problem), 'solve');
+    return;
+  }
+  switchTab('patterns');
+  const search = document.getElementById('pat-search');
+  search.value = problem.name;
+  patActiveDiff = 'all';
+  const diffButtons = document.querySelectorAll('#pat-controls > .fbtn');
+  diffButtons.forEach(button => button.classList.remove('on'));
+  diffButtons[0]?.classList.add('on');
+  patFilter();
+  const row = [...document.querySelectorAll('.pat-prow')].find(item => item.dataset.questionRef === ref);
+  if (row) {
+    row.closest('.pat-card')?.classList.add('open');
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
 function renderProblemSearchResults() {
   const results = document.getElementById('problem-search-results');
   const query = document.getElementById('problem-search-input').value.trim().toLowerCase();
   results.replaceChildren();
   if (!query) {
+    document.getElementById('problem-search-input').setAttribute('aria-expanded', 'false');
     const prompt = document.createElement('p');
     prompt.className = 'problem-search-empty';
     prompt.textContent = 'Type a problem or pattern name to search.';
@@ -2071,45 +2102,36 @@ function renderProblemSearchResults() {
     problem.name.toLowerCase().includes(query) || pattern.name.toLowerCase().includes(query)
   ).slice(0, 60);
   if (!matches.length) {
+    document.getElementById('problem-search-input').setAttribute('aria-expanded', 'false');
     const empty = document.createElement('p');
     empty.className = 'problem-search-empty';
     empty.textContent = 'No matching problems.';
     results.appendChild(empty);
     return;
   }
+  document.getElementById('problem-search-input').setAttribute('aria-expanded', 'true');
   matches.forEach(({ ref, pattern, problem }) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'problem-search-result';
+    button.dataset.questionRef = ref;
     button.setAttribute('role', 'option');
     const title = document.createElement('strong');
     title.textContent = problem.name;
     const detail = document.createElement('span');
     detail.textContent = `${pattern.name} · ${problem.d === 'E' ? 'Easy' : problem.d === 'M' ? 'Medium' : 'Hard'}`;
     button.append(title, detail);
-    button.addEventListener('click', () => {
-      document.getElementById('problem-search-dialog').close();
-      if (problemSearchMode === 'plan') {
-        addPlannedProblem(questionId(problem));
-        switchTab('today');
-        return;
-      }
-      if (problemSearchMode === 'solve') {
-        openProgressDialog(questionId(problem), 'solve');
-        return;
-      }
-      switchTab('patterns');
-      const search = document.getElementById('pat-search');
-      search.value = problem.name;
-      patActiveDiff = 'all';
-      const diffButtons = document.querySelectorAll('#pat-controls > .fbtn');
-      diffButtons.forEach(button => button.classList.remove('on'));
-      diffButtons[0]?.classList.add('on');
-      patFilter();
-      const row = [...document.querySelectorAll('.pat-prow')].find(item => item.dataset.questionRef === ref);
-      if (row) {
-        row.closest('.pat-card')?.classList.add('open');
-        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    button.addEventListener('click', () => selectProblemSearchResult(ref));
+    button.addEventListener('keydown', event => {
+      const options = [...results.querySelectorAll('.problem-search-result')];
+      const index = options.indexOf(button);
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        options[Math.min(index + 1, options.length - 1)]?.focus();
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (index === 0) document.getElementById('problem-search-input').focus();
+        else options[index - 1]?.focus();
       }
     });
     results.appendChild(button);
@@ -2142,7 +2164,21 @@ function startAnimationForQuestion(ref = '') {
   document.getElementById('anim-title').focus();
 }
 
-document.getElementById('problem-search-input').addEventListener('input', renderProblemSearchResults);
+const problemSearchInput = document.getElementById('problem-search-input');
+problemSearchInput.setAttribute('aria-autocomplete', 'list');
+problemSearchInput.setAttribute('aria-controls', 'problem-search-results');
+problemSearchInput.setAttribute('aria-expanded', 'false');
+problemSearchInput.addEventListener('input', renderProblemSearchResults);
+problemSearchInput.addEventListener('keydown', event => {
+  const options = [...document.querySelectorAll('#problem-search-results .problem-search-result')];
+  if (event.key === 'ArrowDown' && options.length) {
+    event.preventDefault();
+    options[0].focus();
+  } else if (event.key === 'Enter' && options.length === 1) {
+    event.preventDefault();
+    selectProblemSearchResult(options[0].dataset.questionRef);
+  }
+});
 document.getElementById('problem-search-form').addEventListener('submit', event => event.preventDefault());
 document.getElementById('problem-search-cancel').addEventListener('click', () => document.getElementById('problem-search-dialog').close());
 document.getElementById('btn-global-search').addEventListener('click', () => openProblemSearch('navigate'));
