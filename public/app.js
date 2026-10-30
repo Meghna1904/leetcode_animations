@@ -1404,7 +1404,10 @@ function renderToday() {
   renderReviewCalendar();
 
   const todayStart = localDayStart();
-  const plannedProblems = todayPlannedProblems(todayKey());
+  const allPlannedProblems = todayPlannedProblems(todayKey());
+  const plannedProblems = allPlannedProblems.filter(({ id }) =>
+    !recordAttempts(questionProgress[id]).some(attempt => attempt.mode === 'solve' && attempt.at >= todayStart)
+  );
   const plannedList = document.createElement('div');
   plannedList.className = 'today-task-list';
   const addPlanned = document.createElement('button');
@@ -1416,15 +1419,15 @@ function renderToday() {
   if (!plannedProblems.length) {
     const empty = document.createElement('p');
     empty.className = 'today-empty';
-    empty.textContent = 'Add problems you plan to solve today. Unfinished problems will carry over to tomorrow.';
+    empty.textContent = allPlannedProblems.length
+      ? 'You’ve solved all the problems on today’s plan.'
+      : 'Add problems you plan to solve today. Unfinished problems will carry over to tomorrow.';
     plannedList.appendChild(empty);
   } else {
     plannedProblems.forEach(({ id, originDay }) => {
       const found = findQuestion(id);
-      const solvedToday = recordAttempts(questionProgress[id]).some(attempt => attempt.mode === 'solve' && attempt.at >= todayStart);
       const detail = originDay ? `${found.pattern.name} · Leftover from ${displayPlanDate(originDay)}` : found.pattern.name;
       const task = createTodayTask(found.problem.name, detail);
-      if (solvedToday) task.row.classList.add('is-complete');
       const link = document.createElement('a');
       link.href = found.problem.url;
       link.target = '_blank';
@@ -1441,19 +1444,12 @@ function renderToday() {
         addAnimation.addEventListener('click', () => startAnimationForQuestion(questionEntry.ref));
         task.actions.appendChild(addAnimation);
       }
-      if (solvedToday) {
-        const complete = document.createElement('span');
-        complete.className = 'today-planned-complete';
-        complete.textContent = 'Solved today';
-        task.actions.appendChild(complete);
-      } else {
-        const solve = document.createElement('button');
-        solve.type = 'button';
-        solve.className = 'fbtn';
-        solve.textContent = 'Log solve';
-        solve.addEventListener('click', () => openProgressDialog(id, 'solve'));
-        task.actions.appendChild(solve);
-      }
+      const solve = document.createElement('button');
+      solve.type = 'button';
+      solve.className = 'fbtn';
+      solve.textContent = 'Log solve';
+      solve.addEventListener('click', () => openProgressDialog(id, 'solve'));
+      task.actions.appendChild(solve);
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'fbtn today-plan-remove';
