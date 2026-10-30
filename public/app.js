@@ -287,6 +287,77 @@ function autoSelectRelatedQuestion() {
   updateQuestionMatchNote(match);
 }
 
+function hideAnimationTitleSuggestions() {
+  const suggestions = document.getElementById('anim-title-suggestions');
+  suggestions.hidden = true;
+  suggestions.replaceChildren();
+  titleInput.setAttribute('aria-expanded', 'false');
+}
+
+function chooseAnimationTitleSuggestion(entry) {
+  titleInput.value = entry.problem.name;
+  questionSelect.value = entry.ref;
+  questionMatchWasChosen = true;
+  updateQuestionMatchNote(entry);
+  hideAnimationTitleSuggestions();
+}
+
+function renderAnimationTitleSuggestions() {
+  const suggestions = document.getElementById('anim-title-suggestions');
+  const query = normalizeQuestionText(titleInput.value);
+  suggestions.replaceChildren();
+  if (query.length < 2) {
+    hideAnimationTitleSuggestions();
+    return;
+  }
+
+  const matches = allQuestionEntries()
+    .map(entry => ({ ...entry, normalizedName: normalizeQuestionText(entry.problem.name) }))
+    .filter(entry => entry.normalizedName.includes(query))
+    .sort((a, b) => Number(!a.normalizedName.startsWith(query)) - Number(!b.normalizedName.startsWith(query)) || a.problem.name.localeCompare(b.problem.name))
+    .slice(0, 8);
+
+  if (!matches.length) {
+    hideAnimationTitleSuggestions();
+    return;
+  }
+
+  matches.forEach(entry => {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'anim-title-suggestion';
+    option.dataset.questionRef = entry.ref;
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', 'false');
+    const title = document.createElement('strong');
+    title.textContent = entry.problem.name;
+    const detail = document.createElement('span');
+    const difficulty = entry.problem.d === 'E' ? 'Easy' : entry.problem.d === 'M' ? 'Medium' : 'Hard';
+    detail.textContent = `${entry.pattern.name} · ${difficulty}`;
+    option.append(title, detail);
+    option.addEventListener('mousedown', event => event.preventDefault());
+    option.addEventListener('click', () => chooseAnimationTitleSuggestion(entry));
+    option.addEventListener('keydown', event => {
+      const options = [...suggestions.querySelectorAll('.anim-title-suggestion')];
+      const index = options.indexOf(option);
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        options[Math.min(index + 1, options.length - 1)]?.focus();
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (index === 0) titleInput.focus();
+        else options[index - 1]?.focus();
+      } else if (event.key === 'Escape') {
+        hideAnimationTitleSuggestions();
+        titleInput.focus();
+      }
+    });
+    suggestions.appendChild(option);
+  });
+  suggestions.hidden = false;
+  titleInput.setAttribute('aria-expanded', 'true');
+}
+
 function refreshQuestionAnimationButtons() {
   document.querySelectorAll('.pat-prow').forEach(row => {
     row.querySelector('.question-animation-actions')?.remove();
@@ -1068,6 +1139,87 @@ function loadDailyPracticePlan() {
   } catch { return {}; }
 }
 
+function saveDailyPracticePlan(plan) {
+  try {
+    localStorage.setItem(DAILY_PRACTICE_PLAN_KEY, JSON.stringify(plan));
+    localSyncVersion++;
+    scheduleCloudSync();
+    return true;
+  } catch {
+    toast('Could not save today’s plan. Browser storage may be full.', true);
+    return false;
+  }
+}
+
+function planDayStart(day) {
+  const [year, month, date] = day.split('-').map(Number);
+  return new Date(year, month - 1, date).getTime();
+}
+
+function displayPlanDate(day) {
+  return new Date(planDayStart(day)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function hasSolveSinceDay(id, day) {
+  const start = planDayStart(day);
+  return recordAttempts(questionProgress[id]).some(attempt => attempt.mode === 'solve' && attempt.at >= start);
+}
+
+function addPlannedProblem(id) {
+  const plan = loadDailyPracticePlan();
+  const day = todayKey();
+  const entry = plan[day] && typeof plan[day] === 'object' ? plan[day] : { questionIds: [] };
+  const questionIds = Array.isArray(entry.questionIds) ? entry.questionIds : [];
+  if (questionIds.includes(id)) {
+    toast('That problem is already on today’s plan.');
+    return;
+  }
+  if (questionIds.length >= 100) {
+    toast('Today’s plan can contain up to 100 problems.', true);
+    return;
+  }
+  plan[day] = { ...entry, questionIds: [...questionIds, id], updatedAt: Date.now() };
+  if (saveDailyPracticePlan(plan)) renderToday();
+}
+
+function removePlannedProblem(id) {
+  const plan = loadDailyPracticePlan();
+  const today = todayKey();
+  const now = Date.now();
+  let changed = false;
+  for (const [day, entry] of Object.entries(plan)) {
+    if (day > today || !Array.isArray(entry?.questionIds) || !entry.questionIds.includes(id)) continue;
+    plan[day] = { ...entry, questionIds: entry.questionIds.filter(questionId => questionId !== id), updatedAt: now };
+    changed = true;
+  }
+  if (changed && saveDailyPracticePlan(plan)) renderToday();
+}
+
+function todayPlannedProblems(today) {
+  const plan = loadDailyPracticePlan();
+  const todayEntry = plan[today];
+  const currentIds = Array.isArray(todayEntry?.questionIds) ? todayEntry.questionIds : [];
+  const planned = new Map();
+
+  Object.keys(plan).filter(day => /^\d{4}-\d{2}-\d{2}$/.test(day) && day < today).sort().forEach(day => {
+    const entry = plan[day];
+    if (!Array.isArray(entry?.questionIds)) return;
+    entry.questionIds.forEach(id => {
+      if (typeof id !== 'string' || hasSolveSinceDay(id, day)) return;
+      const existing = planned.get(id);
+      if (!existing) planned.set(id, { id, originDay: day, plannedToday: false });
+      else if (existing.plannedToday && (!existing.originDay || day < existing.originDay)) existing.originDay = day;
+    });
+  });
+
+  currentIds.forEach(id => {
+    if (typeof id !== 'string') return;
+    const existing = planned.get(id);
+    planned.set(id, { id, originDay: existing?.originDay || null, plannedToday: true });
+  });
+  return [...planned.values()].filter(item => findQuestion(item.id));
+}
+
 function createTodayTask(title, detail) {
   const row = document.createElement('div');
   row.className = 'today-task';
@@ -1252,6 +1404,68 @@ function renderToday() {
   renderReviewCalendar();
 
   const todayStart = localDayStart();
+  const plannedProblems = todayPlannedProblems(todayKey());
+  const plannedList = document.createElement('div');
+  plannedList.className = 'today-task-list';
+  const addPlanned = document.createElement('button');
+  addPlanned.type = 'button';
+  addPlanned.className = 'fbtn today-review-primary today-add-problem';
+  addPlanned.textContent = 'Add problem';
+  addPlanned.addEventListener('click', () => openProblemSearch('plan'));
+  plannedList.appendChild(addPlanned);
+  if (!plannedProblems.length) {
+    const empty = document.createElement('p');
+    empty.className = 'today-empty';
+    empty.textContent = 'Add problems you plan to solve today. Unfinished problems will carry over to tomorrow.';
+    plannedList.appendChild(empty);
+  } else {
+    plannedProblems.forEach(({ id, originDay }) => {
+      const found = findQuestion(id);
+      const solvedToday = recordAttempts(questionProgress[id]).some(attempt => attempt.mode === 'solve' && attempt.at >= todayStart);
+      const detail = originDay ? `${found.pattern.name} · Leftover from ${displayPlanDate(originDay)}` : found.pattern.name;
+      const task = createTodayTask(found.problem.name, detail);
+      if (solvedToday) task.row.classList.add('is-complete');
+      const link = document.createElement('a');
+      link.href = found.problem.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Open problem';
+      task.actions.appendChild(link);
+      const questionEntry = allQuestionEntries().find(entry => questionId(entry.problem) === id);
+      if (questionEntry) {
+        const addAnimation = document.createElement('button');
+        addAnimation.type = 'button';
+        addAnimation.className = 'fbtn today-add-animation';
+        addAnimation.textContent = '+ Animation';
+        addAnimation.setAttribute('aria-label', `Add animation for ${found.problem.name}`);
+        addAnimation.addEventListener('click', () => startAnimationForQuestion(questionEntry.ref));
+        task.actions.appendChild(addAnimation);
+      }
+      if (solvedToday) {
+        const complete = document.createElement('span');
+        complete.className = 'today-planned-complete';
+        complete.textContent = 'Solved today';
+        task.actions.appendChild(complete);
+      } else {
+        const solve = document.createElement('button');
+        solve.type = 'button';
+        solve.className = 'fbtn';
+        solve.textContent = 'Log solve';
+        solve.addEventListener('click', () => openProgressDialog(id, 'solve'));
+        task.actions.appendChild(solve);
+      }
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'fbtn today-plan-remove';
+      remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', `Remove ${found.problem.name} from today’s plan`);
+      remove.addEventListener('click', () => removePlannedProblem(id));
+      task.actions.appendChild(remove);
+      plannedList.appendChild(task.row);
+    });
+  }
+  container.appendChild(createTodayCard('Problems to solve today', `${plannedProblems.length} planned`, plannedList));
+
   const solvedToday = Object.values(questionProgress).map(record => {
     const attempts = record.completed ? recordAttempts(record).filter(attempt => attempt.mode === 'solve' && attempt.at >= todayStart) : [];
     const found = attempts.length ? findQuestion(record.id) : null;
@@ -1380,6 +1594,7 @@ function refreshQuestionProgress() {
   updatePatInfo();
   renderProgressSummary();
   applyPatternGridSort();
+  renderToday();
 }
 
 document.getElementById('progress-form').addEventListener('submit', event => {
@@ -1729,11 +1944,31 @@ const dropZone    = document.getElementById('anim-dropzone');
 const badgeLoaded = document.getElementById('badge-loaded');
 const questionSelect = document.getElementById('anim-question');
 
+document.getElementById('btn-add-animation').addEventListener('click', () => startAnimationForQuestion());
+
 questionSelect.addEventListener('change', () => {
   questionMatchWasChosen = Boolean(questionSelect.value);
   updateQuestionMatchNote(getQuestionFromRef(questionSelect.value));
 });
-titleInput.addEventListener('input', autoSelectRelatedQuestion);
+titleInput.addEventListener('input', () => {
+  autoSelectRelatedQuestion();
+  renderAnimationTitleSuggestions();
+});
+titleInput.addEventListener('keydown', event => {
+  const suggestions = document.getElementById('anim-title-suggestions');
+  if (suggestions.hidden) return;
+  const options = [...suggestions.querySelectorAll('.anim-title-suggestion')];
+  if (event.key === 'ArrowDown' && options.length) {
+    event.preventDefault();
+    options[0].focus();
+  } else if (event.key === 'Enter' && options.length) {
+    event.preventDefault();
+    const match = getQuestionFromRef(options[0].dataset.questionRef);
+    if (match) chooseAnimationTitleSuggestion(match);
+  } else if (event.key === 'Escape') {
+    hideAnimationTitleSuggestions();
+  }
+});
 
 dropZone.addEventListener('click', () => fileInput.click());
 
@@ -1854,6 +2089,11 @@ function renderProblemSearchResults() {
     button.append(title, detail);
     button.addEventListener('click', () => {
       document.getElementById('problem-search-dialog').close();
+      if (problemSearchMode === 'plan') {
+        addPlannedProblem(questionId(problem));
+        switchTab('today');
+        return;
+      }
       if (problemSearchMode === 'solve') {
         openProgressDialog(questionId(problem), 'solve');
         return;
@@ -1878,21 +2118,26 @@ function renderProblemSearchResults() {
 
 function openProblemSearch(mode = 'navigate') {
   problemSearchMode = mode;
-  document.getElementById('problem-search-kicker').textContent = mode === 'solve' ? 'LOG PROGRESS' : 'QUICK SEARCH';
-  document.getElementById('problem-search-title').textContent = mode === 'solve' ? 'Log a solve' : 'Search problems';
+  document.getElementById('problem-search-kicker').textContent = mode === 'solve' ? 'LOG PROGRESS' : mode === 'plan' ? 'TODAY’S PLAN' : 'QUICK SEARCH';
+  document.getElementById('problem-search-title').textContent = mode === 'solve' ? 'Log a solve' : mode === 'plan' ? 'Add a problem to today' : 'Search problems';
   document.getElementById('problem-search-input').value = '';
   renderProblemSearchResults();
   document.getElementById('problem-search-dialog').showModal();
   document.getElementById('problem-search-input').focus();
 }
 
-function startAnimationForQuestion(ref) {
-  const match = getQuestionFromRef(ref);
-  if (!match) return;
+function startAnimationForQuestion(ref = '') {
+  const match = ref ? getQuestionFromRef(ref) : null;
+  if (ref && !match) return;
+  addForm.reset();
+  fileInput.value = '';
+  badgeLoaded.textContent = '';
+  badgeLoaded.classList.remove('show');
+  hideAnimationTitleSuggestions();
   switchTab('animations');
   showAnimView('add');
-  questionSelect.value = ref;
-  questionMatchWasChosen = true;
+  questionSelect.value = match?.ref || '';
+  questionMatchWasChosen = Boolean(match);
   updateQuestionMatchNote(match);
   document.getElementById('anim-title').focus();
 }
